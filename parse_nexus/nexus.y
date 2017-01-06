@@ -27,7 +27,8 @@
  /* generate reentrant code */
 %pure-parser
 %lex-param  {void * scanner}
-%parse-param  {void * scanner} {ParseVars *parse_vars}
+%parse-param  {void * scanner}
+%parse-param  {ParseVars *parse_vars}
 
 
 %{
