@@ -1,0 +1,63 @@
+#NEXUS
+BEGIN TAXA;
+        DIMENSIONS NTAX=1999999;
+        TAXLABELS
+                I1
+                I2
+                I3
+                L4
+                I5
+                L1999995
+                I1999996
+                L1999997
+                L1999998
+                L1999999
+;
+END;
+
+[
+  this is a comment
+]
+
+BEGIN TREES;
+TREE tree1 = ((5:75,6:67)2:1.23,3:2.34)_I1:123.45;
+tree tree2 = (3:1.23,4:2.34)_I9:98.765;
+
+[
+tree tree3 = ((A,B),C);
+tree numbers = (a:1, b:.2, c:3.2, d:4e3, e:-5, f:5e2, g:6e+3, h:7e+4)ZZ;
+
+tree no-names = (,,(,));
+tree leaves-named = (A,B,(C,D));
+tree all-named = (A,B,(C,D)E)F;
+tree not-root-dist-to-parent = (:0.1,:0.2,(:0.3,:0.4):0.5);
+tree all-dist-to-parent = (:0.1,:0.2,(:0.3,:0.4):0.5):0.0;
+tree dist-and-leaf-names = (A:0.1,B:0.2,(C:0.3,D:0.4):0.5);
+tree dist-and-all-names = (A:0.1,B:0.2,(C:0.3,D:0.4)E:0.5)F;
+tree rooted-on-leaf = ((B:0.2,(C:0.3,D:0.4)E:0.5)F:0.1)A;
+]
+
+end
+
+;
+
+
+begin characters;
+dimensions ntax =3 nchar =23;
+format datatype=rna gap=-;
+matrix
+_I1       ---AG------------G--A--
+_I2       ---AT------------G--A--
+12345       ---AA------------G--A--
+;
+end;
+
+begin crimson;
+dimensions stuff =400 foo =  bar;
+format datatype=rna gap=-;
+matrix
+_I1       ---.-------------(--(--
+_I2       ---.-------------(--(--
+_I3       ---.-------------(--(--
+;
+end;

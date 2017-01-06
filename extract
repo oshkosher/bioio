@@ -1,0 +1,56 @@
+#!/usr/bin/python
+
+import sys
+
+READ_SIZE = 16384
+
+def main(args):
+  if len(args) != 3:
+    sys.stderr.write("""
+  extract-bytes <filename>|- [@]<offset> <len>
+  If <offset> has '@' prefix, it will be multiplied by <len>
+
+""")
+    return 0
+
+  if args[0] == '-':
+    inf = sys.stdin
+  else:
+    inf = open(args[0], 'r')
+    if not inf:
+      sys.stderr.write('Cannot open "%s"\n' % args[0])
+      return 1
+
+  length = int(args[2])
+
+  if args[1][0] == '@':
+    offset = length * int(args[1][1:])
+  else:
+    offset = int(args[1])
+  inf.seek(offset)
+
+  while length > 0:
+    if length > READ_SIZE:
+      readSize = READ_SIZE
+    else:
+      readSize = length
+    data = inf.read(readSize)
+  
+    if len(data) != readSize:
+      sys.stderr.write('Failed to read %d bytes at offset %d\n' % 
+                       (length, offset))
+      return 1
+
+    offset += readSize
+    length -= readSize
+
+    try:
+      sys.stdout.write(data)
+    except IOError:
+      sys.exit(0)
+
+  inf.close()
+                     
+
+if __name__ == "__main__":
+  sys.exit(main(sys.argv[1:]))
