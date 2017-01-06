@@ -2,6 +2,7 @@ EXECS = read_nexus
 
 all: $(EXECS)
 
+# add librt for clock_gettime()
 LIBS=-lrt
 OPT=-O3
 
@@ -17,10 +18,10 @@ MPILIB=-lmpi
 endif
 
 read_nexus: read_nexus.c nexus_lexer.o nexus.tab.o nexus_parse.o
-	$(CC) $^ -o $@
+	$(CC) $^ $(LIBS) -o $@
 
 testparse: read_nexus example.nex
-	./read_nexus.exe example.nex
+	./read_nexus example.nex
 
 # Tell flex to make an 8-bit lexer because with a 7-bit lexer it creates
 # code that crashes if given garbage input.  This happens because the

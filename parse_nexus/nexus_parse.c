@@ -6,6 +6,10 @@
 #include "nexus.tab.h"
 #include "nexus_lexer.h"
 
+/* just in case you're using an old version of bison that doesn't include
+   this in nexus.tab.h */
+int yyparse (void * scanner, ParseVars *parse_vars);
+
 int nexus_parse_file(FILE *inf, void *user_data) {
   yyscan_t scanner;
   int result;
