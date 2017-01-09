@@ -45,18 +45,19 @@ section: taxa_section | tree_section | chars_section | crimson_section ;
 taxa_section:
   BEGIN_TOK TAXA SEMICOLON
   {parse_vars->new_section = NEXUS_SECTION_TAXA;
-   nexus_section_start(parse_vars->user_data, NEXUS_SECTION_TAXA,
-                       yyget_lineno(scanner),
-                       parse_vars->begin_byte_offset);}
+   parse_vars->callback->section_start
+      (parse_vars->user_data, NEXUS_SECTION_TAXA, yyget_lineno(scanner),
+       parse_vars->begin_byte_offset);}
   setting_lines TAXLABELS taxa_list SEMICOLON END SEMICOLON
-  {nexus_section_end(parse_vars->user_data, NEXUS_SECTION_TAXA,
-                     yyget_lineno(scanner),
-                     parse_vars->byte_offset);}
+  {parse_vars->callback->section_end
+      (parse_vars->user_data, NEXUS_SECTION_TAXA, yyget_lineno(scanner),
+       parse_vars->byte_offset);}
   ;
 
 taxa_list:
   taxa_list NAME {
-      nexus_taxa_label(parse_vars->user_data, $2);
+      parse_vars->callback->taxa_item(parse_vars->user_data, $2);
+      free($2);
     }
   | /* empty */ ;
 
@@ -64,18 +65,19 @@ taxa_list:
 tree_section:
   BEGIN_TOK TREES SEMICOLON
   {parse_vars->new_section = NEXUS_SECTION_TREES;
-   nexus_section_start(parse_vars->user_data, NEXUS_SECTION_TREES,
-                       yyget_lineno(scanner),
-                       parse_vars->begin_byte_offset);}
+   parse_vars->callback->section_start
+     (parse_vars->user_data, NEXUS_SECTION_TREES, yyget_lineno(scanner),
+      parse_vars->begin_byte_offset);}
   tree_list END SEMICOLON
-  {nexus_section_end(parse_vars->user_data, NEXUS_SECTION_TREES,
-                     yyget_lineno(scanner),
-                     parse_vars->byte_offset);}
+  {parse_vars->callback->section_end
+      (parse_vars->user_data, NEXUS_SECTION_TREES, yyget_lineno(scanner),
+       parse_vars->byte_offset);}
   ;
 
 tree_list:
   TREE NAME EQUALS tree_node SEMICOLON {
-    nexus_tree(parse_vars->user_data, $2, $4);
+    parse_vars->callback->tree(parse_vars->user_data, $2, $4);
+    free($2);
   }
   tree_list
   | /* empty */ ;
@@ -128,13 +130,13 @@ node_list:
 chars_section:
   BEGIN_TOK CHARACTERS SEMICOLON
   {parse_vars->new_section = NEXUS_SECTION_CHARACTERS;
-   nexus_section_start(parse_vars->user_data, NEXUS_SECTION_CHARACTERS,
-                       yyget_lineno(scanner),
-                       parse_vars->begin_byte_offset);}
+   parse_vars->callback->section_start
+     (parse_vars->user_data, NEXUS_SECTION_CHARACTERS, yyget_lineno(scanner),
+      parse_vars->begin_byte_offset);}
   setting_lines MATRIX chars_list SEMICOLON END SEMICOLON
-  {nexus_section_end(parse_vars->user_data, NEXUS_SECTION_CHARACTERS,
-                     yyget_lineno(scanner),
-                     parse_vars->byte_offset);}
+  {parse_vars->callback->section_end
+      (parse_vars->user_data, NEXUS_SECTION_CHARACTERS, yyget_lineno(scanner),
+       parse_vars->byte_offset);}
   ;
 
 /* dimensions... format... */
@@ -144,7 +146,9 @@ setting_lines:
       free($2);
     }
     option_list SEMICOLON {
-      nexus_setting(parse_vars->user_data, parse_vars->current_setting);
+      parse_vars->callback->setting(parse_vars->user_data,
+                                    parse_vars->current_setting);
+      NexusSetting_destroy(parse_vars->current_setting);
       parse_vars->current_setting = NULL;
     }
   | /* empty */ ;
@@ -165,7 +169,9 @@ option_list:
    name2  GC-UA... */
 chars_list:
     chars_list NAME CHARS_STR {
-      nexus_chars_entry(parse_vars->user_data, $2, $3);
+      parse_vars->callback->chars_item(parse_vars->user_data, $2, $3);
+      free($2);
+      free($3);
     }
   | /* empty */ ;
 
@@ -173,13 +179,13 @@ chars_list:
 crimson_section:
   BEGIN_TOK CRIMSON SEMICOLON
   {parse_vars->new_section = NEXUS_SECTION_CRIMSON;
-   nexus_section_start(parse_vars->user_data, NEXUS_SECTION_CRIMSON,
-                       yyget_lineno(scanner),
-                       parse_vars->begin_byte_offset);}
+   parse_vars->callback->section_start
+     (parse_vars->user_data, NEXUS_SECTION_CRIMSON, yyget_lineno(scanner),
+      parse_vars->begin_byte_offset);}
   setting_lines MATRIX crimson_list SEMICOLON END SEMICOLON
-  {nexus_section_end(parse_vars->user_data, NEXUS_SECTION_CRIMSON, 
-                     yyget_lineno(scanner),
-                     parse_vars->byte_offset);}
+  {parse_vars->callback->section_end
+      (parse_vars->user_data, NEXUS_SECTION_CRIMSON, yyget_lineno(scanner),
+       parse_vars->byte_offset);}
   ;
 
 
@@ -187,7 +193,9 @@ crimson_section:
    name2  ....(((.))) */
 crimson_list:
     crimson_list NAME CRIMSON_STR {
-      nexus_crimson_entry(parse_vars->user_data, $2, $3);
+      parse_vars->callback->crimson_item(parse_vars->user_data, $2, $3);
+      free($2);
+      free($3);
     }
   | /* empty */ ;
 

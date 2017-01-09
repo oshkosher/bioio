@@ -1,6 +1,6 @@
 #NEXUS
 BEGIN TAXA;
-        DIMENSIONS NTAX=1999999;
+        DIMENSIONS NTAX=10;
         TAXLABELS
                 I1
                 I2

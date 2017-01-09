@@ -10,11 +10,23 @@ double get_time();
 int rows_read = 0;
 void progress_update();
 
+void my_section_start(void *user_data, int section_id, int line_no, 
+                      long file_offset);
+void my_section_end(void *user_data, int section_id, int line_no,
+                    long file_offset);
+void my_tree(void *user_data, const char *name, NewickTreeNode *tree);
+void my_setting(void *user_data, NexusSetting *opt);
+void my_chars_item(void *user_data, const char *name, const char *data);
+void my_crimson_item(void *user_data, const char *name, const char *data);
+
+
+
 int main(int argc, char **argv) {
   int result;
   char *filename;
   FILE *inf;
   void *user_data = NULL;
+  NexusParseCallbacks callback_functions = {0};
 
   if (argc != 2) printHelp();
 
@@ -29,8 +41,16 @@ int main(int argc, char **argv) {
     }
   }
 
+  callback_functions.section_start = my_section_start;
+  callback_functions.section_end = my_section_end;
+  callback_functions.tree = my_tree;
+  callback_functions.setting = my_setting;
+  callback_functions.chars_item = my_chars_item;
+  callback_functions.crimson_item = my_crimson_item;
+  
+  
   printf("Before parsing, %ld memory in use\n", get_memory_used());
-  result = nexus_parse_file(inf, user_data);
+  result = nexus_parse_file(inf, user_data, &callback_functions);
 
   if (inf != stdin) fclose(inf);
   
@@ -47,8 +67,8 @@ int main(int argc, char **argv) {
 double section_start_time;
 long section_start_offset;
 
-void nexus_section_start(void *user_data, int section_id, int line_no, 
-                         long file_offset) {
+void my_section_start(void *user_data, int section_id, int line_no, 
+                      long file_offset) {
   printf("\n%s section start at line %d, file offset %ld\n", 
          nexus_section_name(section_id), line_no, file_offset);
   section_start_time = get_time();
@@ -56,8 +76,8 @@ void nexus_section_start(void *user_data, int section_id, int line_no,
   rows_read = 0;
 }
 
-void nexus_section_end(void *user_data, int section_id, int line_no,
-                       long file_offset) {
+void my_section_end(void *user_data, int section_id, int line_no,
+                    long file_offset) {
   double elapsed = get_time() - section_start_time;
   long size = file_offset - section_start_offset;
   double mbps = size / (1024*1024 * elapsed);
@@ -68,7 +88,7 @@ void nexus_section_end(void *user_data, int section_id, int line_no,
 }
 
 
-void nexus_tree(void *user_data, char *name, NewickTreeNode *tree) {
+void my_tree(void *user_data, const char *name, NewickTreeNode *tree) {
   
   printf("tree %s\n", name);
 
@@ -80,16 +100,10 @@ void nexus_tree(void *user_data, char *name, NewickTreeNode *tree) {
 
   printf("with tree in memory, %ld memory in use\n", get_memory_used());
 
-  free(name);
   NewickTreeNode_destroy(tree);
 }
 
-void nexus_taxa_label(void *user_data, char *name) {
-  /* printf("taxa label: %s\n", name); */
-  free(name);
-}
-
-void nexus_setting(void *user_data, NexusSetting *opt) {
+void my_setting(void *user_data, NexusSetting *opt) {
   NexusSettingPair *pair = opt->setting_list;
   printf("setting %s", opt->name);
   while (pair) {
@@ -97,23 +111,19 @@ void nexus_setting(void *user_data, NexusSetting *opt) {
     pair = pair->next;
   }
   printf("\n");
-  NexusSetting_destroy(opt);
+  /* NexusSetting_destroy(opt); */
 }
 
 
 /* Callees must deallocate name and data with free(). */
-void nexus_chars_entry(void *user_data, char *name, char *data) {
+void my_chars_item(void *user_data, const char *name, const char *data) {
   /* printf("chars %s: %s\n", name, data); */
   progress_update();
-  free(name);
-  free(data);
 }
 
-void nexus_crimson_entry(void *user_data, char *name, char *data) {
+void my_crimson_item(void *user_data, const char *name, const char *data) {
   /* printf("crimson %s: %s\n", name, data); */
   progress_update();
-  free(name);
-  free(data);
 }
 
 

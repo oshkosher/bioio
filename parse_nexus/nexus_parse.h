@@ -33,9 +33,15 @@ NexusSetting *NexusSetting_create(const char *name);
 void NexusSetting_add(NexusSetting *opt, const char *key, const char *value);
 void NexusSetting_destroy(NexusSetting*);
 
+/* forward reference */
+struct NexusParseCallbacks;
+
 /* Used internally in the parser and lexer */
 typedef struct ParseVars {
   void *user_data;
+
+  /* callback functions */
+  struct NexusParseCallbacks *callback;
 
   /* used by parser */
   NexusSetting *current_setting;
@@ -53,14 +59,6 @@ typedef struct ParseVars {
 } ParseVars;
 
 
-/* Call this to start parsing.
-
-   The value passed as user_data will be passed as the first argument
-   to each of the callback functions below. You can use this to pass
-   a pointer to your own data to each of the callbacks.
-*/
-int nexus_parse_file(FILE *inf, void *user_data);
-
 #define NEXUS_SECTION_TAXA 1
 #define NEXUS_SECTION_TREES 2
 #define NEXUS_SECTION_CHARACTERS 3
@@ -69,41 +67,65 @@ int nexus_parse_file(FILE *inf, void *user_data);
 /* Converts a section id to a section name. */
 const char *nexus_section_name(int section_id);
 
+/* This structure contains pointers to functions that the parser will
+   call to pass results of the parsing to the user. The user should
+   should create one of these structures and set the function pointers
+   to the their own functions.
 
-/* These functions will be called by the parser to pass the results
-   of the parsing.  The user's code must implement all of these.
-   Empty stubs can be copied from nexus_parse_stubs.c. */
+   Calling NexusParseCallbacks_init() on one of these structures will
+   fill it with functions that do nothing but deallocate memory as
+   appropriate.
 
-/* These will be called at the beginning and end of each section. */
-void nexus_section_start(void *user_data, int section_id, int line_no,
-                         long file_offset);
-void nexus_section_end(void *user_data, int section_id, int line_no,
-                       long file_offset);
-
-/* This will be called on each setting line at the top of the sections,
-   like this: "dimensions ntax =3 nchar =23;" 
-   The callee must deallocate the object with NexusSetting_destroy(opt).
+   All strings are passed as (const char *) arrays, and the user
+   should not modify or deallocate them.  For deallocation
+   responsibilities of other data structures, check the comments on
+   each function.
+   
+   This would be a lot easier in C++ :-)
 */
-void nexus_setting(void *user_data, NexusSetting *opt);
+typedef struct NexusParseCallbacks {
+  /* These will be called at the beginning and end of each section.
+     section_id is one of the NEXUS_SECTION_XXX macros defined above. */
+  void (*section_start)(void *user_data, int section_id, int line_no,
+                        long file_offset);
 
-/* This will be called for each entry in the "taxlabels" list in the
-   taxa section.
-   The callee must deallocate the string with free(name).
+  void (*section_end)(void *user_data, int section_id, int line_no,
+                      long file_offset);
+
+  /* This will be called on each setting line at the top of the sections,
+     like this: "dimensions ntax =3 nchar =23;" 
+     The called function should not deallocate the setting object.
+  */
+  void (*setting)(void *user_data, NexusSetting *setting);
+
+  /* This will be called for each entry in the "taxlabels" list in the
+     taxa section.
+  */
+  void (*taxa_item)(void *user_data, const char *name);
+
+  /* This is called on each tree in the tree section.  The callee must
+     decallocate the tree with NewickTreeNode_destroy(tree). */
+  void (*tree)(void *user_data, const char *name, NewickTreeNode *tree);
+
+  /* This is called on each entry in the matrix list in the characters section.
+     The callee must deallocate name and data with free(). */
+  void (*chars_item)(void *user_data, const char *name, const char *data);
+
+
+  /* This is called on each entry in the matrix list in the crimson section.
+     The callee must deallocate name and data with free(). */
+  void (*crimson_item)(void *user_data, const char *name, const char *data);
+} NexusParseCallbacks;
+
+
+/* Call this to start parsing.
+
+   user_data - this will be passed as the first argument to each of
+     the callback functions, so the user can access their own data.
+   callbacks - a structure containing pointers to functions that will
+     be called by the parser to pass data to the user.
 */
-void nexus_taxa_label(void *user_data, char *name);
-
-/* This is called on each tree in the tree section.
-   The callee must decallocate the name string with free(name) and
-   the tree with NewickTreeNode_destroy(tree); */
-void nexus_tree(void *user_data, char *name, NewickTreeNode *tree);
-
-/* This is called on each entry in the matix list in the characters section.
-   The callee must deallocate name and data with free(). */
-void nexus_chars_entry(void *user_data, char *name, char *data);
-
-/* This is called on each entry in the matix list in the crimson section.
-   The callee must deallocate name and data with free(). */
-void nexus_crimson_entry(void *user_data, char *name, char *data);
-
+int nexus_parse_file(FILE *inf, void *user_data,
+                     struct NexusParseCallbacks *callbacks);
 
 #endif /* __NEWICK_TREE_H__ */

@@ -10,12 +10,16 @@
    this in nexus.tab.h */
 int yyparse (void * scanner, ParseVars *parse_vars);
 
-int nexus_parse_file(FILE *inf, void *user_data) {
+/* Fill any null function pointers with functions that do nothing. */
+void NexusParseCallbacks_fill(NexusParseCallbacks *nc);
+
+int nexus_parse_file(FILE *inf, void *user_data, NexusParseCallbacks *nc) {
   yyscan_t scanner;
   int result;
-  ParseVars parse_vars = {user_data, NULL, 0, 0};
+  ParseVars parse_vars = {user_data, nc, NULL, 0, 0};
 
-  yylex_init(&scanner);
+  NexusParseCallbacks_fill(nc);
+  
   yylex_init_extra(&parse_vars, &scanner);
   yyset_in(inf, scanner);
   result = yyparse(scanner, &parse_vars);
@@ -35,9 +39,10 @@ const char *nexus_section_name(int section_id) {
   }
 }
 
+
 void yyerror(void *scanner, const char *err) {
   /* printf("%d: %s\n", yyget_lineno(scanner), err); */
-  printf("Sytax error, line %d at \"%s\"\n", yyget_lineno(scanner),
+  printf("Syntax error, line %d at \"%s\"\n", yyget_lineno(scanner),
          yyget_text(scanner));
 }
 
@@ -47,8 +52,7 @@ NewickTreeNode* NewickTreeNode_create(const char *name, double length) {
   if (name == NULL) {
     node->name = NULL;
   } else {
-    node->name = (char*) malloc(strlen(name) + 1);
-    strcpy(node->name, name);
+    node->name = (char*) strdup(name);
   }
   node->length = length;
   node->parent = node->child = node->sibling = NULL;
@@ -105,7 +109,7 @@ void NewickTreeNode_print(NewickTreeNode *node) {
   NewickTreeNode_print_recurse(node, 0);
 }
 
-
+/* used in recursive NewickTreeNode_stats calls */
 typedef struct {
   int internal_nodes, leaves;
   int child_count, height;
@@ -196,3 +200,29 @@ void NexusSetting_add(NexusSetting *opt, const char *key, const char *value) {
     tail->next = pair;
   }
 }
+
+
+static void null_callback_section_start(void *user_data, int section_id,
+                                        int line_no, long file_offset) {}
+static void null_callback_section_end(void *user_data, int section_id,
+                                      int line_no, long file_offset) {}
+static void null_callback_setting(void *user_data, NexusSetting *opt) {}
+static void null_callback_taxa_item(void *user_data, const char *name) {}
+static void null_callback_tree(void *user_data, const char *name,
+                               NewickTreeNode *tree) {
+  NewickTreeNode_destroy(tree);
+}
+static void null_callback_chars_item(void *user_data, const char *name,
+                                      const char *data) {}
+static void null_callback_crimson_item(void *user_data, const char *name,
+                                        const char *data) {}
+
+void NexusParseCallbacks_fill(NexusParseCallbacks *nc) {
+  if (!nc->section_start) nc->section_start = null_callback_section_start;
+  if (!nc->section_end) nc->section_end = null_callback_section_end;
+  if (!nc->setting) nc->setting = null_callback_setting;
+  if (!nc->taxa_item) nc->taxa_item = null_callback_taxa_item;
+  if (!nc->tree) nc->tree = null_callback_tree;
+  if (!nc->chars_item) nc->chars_item = null_callback_chars_item;
+  if (!nc->crimson_item) nc->crimson_item = null_callback_crimson_item;
+}  
