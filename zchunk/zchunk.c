@@ -4,15 +4,65 @@
 #include <inttypes.h>
 #include "zchunk.h"
 
+#ifdef ZCHUNK_SUPPORT_GZIP
+#include <zlib.h>  /* gzip */
+typedef struct gz_state_struct {
+
+  /* zlib (gzip) options
+     See http://www.zlib.net/manual.html*/
+  z_stream gz;
+
+  /* Z_BEST_COMPRESSION, Z_DEFAULT_COMPRESSION, or Z_BEST_SPEED */
+  int zlib_compression_level;
+
+  /* compression window size (1..15), add 16 for gzip stream (rather
+     than raw zlib */
+  int zlib_window_bits;
+
+  /* 1 (least memory, slow) to 9 (most memory, fast) */  
+  int zlib_mem_level;
+} gz_state_struct;
+#endif
+
+#ifdef ZCHUNK_SUPPORT_BZIP
+#include <bzlib.h> /* bzip2 */
+typedef struct bz_state_struct {
+  /* bzlib (bzip2) options
+     See http://www.bzip.org/1.0.5/bzip2-manual-1.0.5.html */
+
+  bz_stream bz;
+  
+  /* [1..9], increasing memory usage and compression rate */
+  int bzlib_block_size;
+  
+  /* [0..4], silent to verbose */
+  int bzlib_verbose;
+  
+  /* [0..250], affects performance with very repetitive data,
+     default is 30, 0 yields the default */
+  int bzlib_work_factor;
+} bz_state_struct;  
+#endif
+
+#ifdef ZCHUNK_SUPPORT_FZSTD
+#include "zstd.h"
+typedef struct fzstd_state_struct {
+  int compression_level;
+} fzstd_state_struct;
+#endif
+
 #define DEFAULT_INDEX_SIZE 100
 #define MAX_ZLIB_WINDOW_BITS 15
 #define ZLIB_WINDOW_BITS_GZIP 16
+
+
 
 /* Sets defaults in ZChunkEngine, with the algorithm set to gzip with
    maximum compression. */
 int zchunkEngineInit(ZChunkEngine *z, ZChunkCompressionAlgorithm alg,
                      ZChunkDirection dir, ZChunkCompressionStrategy strat) {
-  int err;
+
+  memset(z, 0, sizeof(ZChunkEngine));
 
   if (alg == 0) alg = ZCHUNK_ALG_GZIP;
   if (dir == 0) dir = ZCHUNK_DIR_COMPRESS;
@@ -21,34 +71,26 @@ int zchunkEngineInit(ZChunkEngine *z, ZChunkCompressionAlgorithm alg,
   z->alg = alg;
   z->dir = dir;
 
-  if (strat == ZCHUNK_STRATEGY_MAX_COMPRESSION) {
-    z->zlib_compression_level = Z_BEST_COMPRESSION;
-    z->bzlib_block_size = 9;
-  } else {
-    z->zlib_compression_level = Z_DEFAULT_COMPRESSION;
-    z->bzlib_block_size = 3;
-  }
+#ifdef ZCHUNK_SUPPORT_GZIP
+  if (z->alg == ZCHUNK_ALG_GZIP) {
+    gz_state_struct *gz;
+    int err;
+    z->gz_state = gz = (gz_state_struct*) malloc(sizeof(gz_state_struct));
+    if (strat == ZCHUNK_STRATEGY_MAX_COMPRESSION) {
+      gz->zlib_compression_level = Z_BEST_COMPRESSION;
+    } else {
+      gz->zlib_compression_level = Z_DEFAULT_COMPRESSION;
+    }
+    gz->zlib_window_bits = MAX_ZLIB_WINDOW_BITS + ZLIB_WINDOW_BITS_GZIP;
+    gz->zlib_mem_level = 9;
 
-  z->zlib_window_bits = MAX_ZLIB_WINDOW_BITS + ZLIB_WINDOW_BITS_GZIP;
-  z->zlib_mem_level = 9;
-
-  z->gz.zalloc = Z_NULL;
-  z->gz.zfree = Z_NULL;
-  z->gz.opaque = 0;
-  
-  z->bzlib_verbose = 0;
-  z->bzlib_work_factor = 30;
-
-  z->bz.bzalloc = NULL;
-  z->bz.bzfree = NULL;
-  z->bz.opaque = NULL;
-  
-
-  if (alg == ZCHUNK_ALG_GZIP) {
+    gz->gz.zalloc = Z_NULL;
+    gz->gz.zfree = Z_NULL;
+    gz->gz.opaque = 0;
 
     if (dir == ZCHUNK_DIR_COMPRESS) {
-      err = deflateInit2(&z->gz, z->zlib_compression_level, Z_DEFLATED,
-                         z->zlib_window_bits, z->zlib_mem_level,
+      err = deflateInit2(&gz->gz, gz->zlib_compression_level, Z_DEFLATED,
+                         gz->zlib_window_bits, gz->zlib_mem_level,
                          Z_DEFAULT_STRATEGY);
       if (err != Z_OK) {
         fprintf(stderr, "Error initializing gzip compression: %s\n",
@@ -61,9 +103,9 @@ int zchunkEngineInit(ZChunkEngine *z, ZChunkCompressionAlgorithm alg,
     }
 
     else { /* dir == ZCHUNK_DIR_DECOMPRESS */
-      z->gz.next_in = Z_NULL;
-      z->gz.avail_in = 0;
-      err = inflateInit2(&z->gz,
+      gz->gz.next_in = Z_NULL;
+      gz->gz.avail_in = 0;
+      err = inflateInit2(&gz->gz,
                          MAX_ZLIB_WINDOW_BITS + ZLIB_WINDOW_BITS_GZIP);
       if (err != Z_OK) {
         fprintf(stderr, "Error initializing gzip decompression: %s\n",
@@ -75,13 +117,41 @@ int zchunkEngineInit(ZChunkEngine *z, ZChunkCompressionAlgorithm alg,
       }
       
     }
-
   }
+#endif
 
-  else { /* alg == ZCHUNK_ALG_BZIP */
-    /* init / close for each chunk */
+#ifdef ZCHUNK_SUPPORT_BZIP
+  if (z->alg == ZCHUNK_ALG_BZIP) {
+    bz_state_struct *bz;
+    z->bz_state = bz = (bz_state_struct*) malloc(sizeof(bz_state_struct));
+    if (strat == ZCHUNK_STRATEGY_MAX_COMPRESSION) {
+      bz->bzlib_block_size = 9;
+    } else {
+      bz->bzlib_block_size = 3;
+    }
+    bz->bzlib_verbose = 0;
+    bz->bzlib_work_factor = 30;
+
+    bz->bz.bzalloc = NULL;
+    bz->bz.bzfree = NULL;
+    bz->bz.opaque = NULL;
   }
+#endif
 
+#ifdef ZCHUNK_SUPPORT_FZSTD
+  if (z->alg == ZCHUNK_ALG_FZSTD) {
+    fzstd_state_struct *zstd;
+    z->fzstd_state = zstd = (fzstd_state_struct*)
+      malloc(sizeof(fzstd_state_struct));
+
+    if (strat == ZCHUNK_STRATEGY_MAX_COMPRESSION) {
+      zstd->compression_level = 10;
+    } else {
+      zstd->compression_level = 3;
+    }
+  }
+#endif
+  
   return 0;
 }
 
@@ -90,12 +160,24 @@ int zchunkEngineInit(ZChunkEngine *z, ZChunkCompressionAlgorithm alg,
 /* With the current settings, return the maximum size buffer that could
    result from compressing n bytes. */
 size_t zchunkMaxCompressedSize(ZChunkCompressionAlgorithm alg, size_t n) {
+#ifdef ZCHUNK_SUPPORT_GZIP
   if (alg == ZCHUNK_ALG_GZIP) {
     /* Add a bit for gzip header/footer */
     return compressBound(n) + 256;
-  } else { /* ZCHUNK_ALG_BZIP */
+  }
+#endif
+
+  if (alg == ZCHUNK_ALG_BZIP) {
     return n * 101 / 100 + 601;
   }
+
+#ifdef ZCHUNK_SUPPORT_FZSTD
+  if (alg == ZCHUNK_ALG_FZSTD) {
+    return ZSTD_compressBound(n);
+  }
+#endif
+
+  return 0;
 }
 
 
@@ -108,30 +190,37 @@ size_t zchunkEngineProcess(ZChunkEngine *z,
   size_t result_len;
   const char *dir_prefix = z->dir == ZCHUNK_DIR_COMPRESS ? "" : "de";
 
+#ifdef ZCHUNK_SUPPORT_GZIP
   if (z->alg == ZCHUNK_ALG_GZIP) {
+    gz_state_struct *gz = z->gz_state;
 
-    z->gz.next_in = (unsigned char*) input;
-    z->gz.avail_in = input_len;
-    z->gz.next_out = (unsigned char*) output;
-    z->gz.avail_out = output_len;
+    gz->gz.next_in = (unsigned char*) input;
+    gz->gz.avail_in = input_len;
+    gz->gz.next_out = (unsigned char*) output;
+    gz->gz.avail_out = output_len;
 
     if (z->dir == ZCHUNK_DIR_COMPRESS) {
-      err = deflate(&z->gz, Z_FINISH);
-      deflateReset(&z->gz);
+      err = deflate(&gz->gz, Z_FINISH);
+      deflateReset(&gz->gz);
     } else {
-      err = inflate(&z->gz, Z_FINISH);
-      inflateReset(&z->gz);
+      err = inflate(&gz->gz, Z_FINISH);
+      inflateReset(&gz->gz);
     }
 
     if (err == Z_STREAM_END) {
-      return output_len - z->gz.avail_out;
+      return output_len - gz->gz.avail_out;
     } else {
       fprintf(stderr, "error: %scompressing, error code %d\n",
               dir_prefix, err);
       return 0;
     }
 
-  } else { /* bzip2 */
+  }
+#endif
+
+#ifdef ZCHUNK_SUPPORT_BZIP
+  if (z->alg == ZCHUNK_ALG_BZIP) {
+    bz_state_struct *bz = z->bz_state;
 
     /*
     z->bz.bzalloc = NULL;
@@ -139,10 +228,10 @@ size_t zchunkEngineProcess(ZChunkEngine *z,
     z->bz.opaque = NULL;
     */
     if (z->dir == ZCHUNK_DIR_COMPRESS) {
-      err = BZ2_bzCompressInit(&z->bz, z->bzlib_block_size,
-                               z->bzlib_verbose, z->bzlib_work_factor);
+      err = BZ2_bzCompressInit(&bz->bz, bz->bzlib_block_size,
+                               bz->bzlib_verbose, bz->bzlib_work_factor);
     } else {
-      err = BZ2_bzDecompressInit(&z->bz, z->bzlib_verbose, 0);
+      err = BZ2_bzDecompressInit(&bz->bz, bz->bzlib_verbose, 0);
     }
     
     if (err != BZ_OK) {
@@ -150,29 +239,50 @@ size_t zchunkEngineProcess(ZChunkEngine *z,
       return 0;
     }
   
-    z->bz.next_in = (char*) input;
-    z->bz.avail_in = input_len;
-    z->bz.next_out = (char*) output;
-    z->bz.avail_out = output_len;
+    bz->bz.next_in = (char*) input;
+    bz->bz.avail_in = input_len;
+    bz->bz.next_out = (char*) output;
+    bz->bz.avail_out = output_len;
 
     if (z->dir == ZCHUNK_DIR_COMPRESS) {
-      err = BZ2_bzCompress(&z->bz, BZ_FINISH);
+      err = BZ2_bzCompress(&bz->bz, BZ_FINISH);
     } else {
-      err = BZ2_bzDecompress(&z->bz);
+      err = BZ2_bzDecompress(&bz->bz);
     }
     if (err != BZ_STREAM_END) {
       fprintf(stderr, "Error in bzip %scompress: %d\n", dir_prefix, err);
       return 0;
     }
 
-    result_len = output_len - z->bz.avail_out;
+    result_len = output_len - bz->bz.avail_out;
     if (z->dir == ZCHUNK_DIR_COMPRESS) {
-      BZ2_bzCompressEnd(&z->bz);
+      BZ2_bzCompressEnd(&bz->bz);
     } else {
-      BZ2_bzDecompressEnd(&z->bz);
+      BZ2_bzDecompressEnd(&bz->bz);
     }
     return result_len;
   }
+#endif
+
+#ifdef ZCHUNK_SUPPORT_FZSTD
+  if (z->alg == ZCHUNK_ALG_FZSTD) {
+    if (z->dir == ZCHUNK_DIR_COMPRESS) {
+      result_len = ZSTD_compress(output, output_len, input, input_len,
+                                 z->fzstd_state->compression_level);
+    } else {
+      result_len = ZSTD_decompress(output, output_len, input, input_len);
+    }
+    if (ZSTD_isError(result_len)) {
+      fprintf(stderr, "error %scompressing: %s\n", dir_prefix,
+              ZSTD_getErrorName(result_len));
+      return 0;
+    } else {
+      return result_len;
+    }
+  }
+#endif
+
+  return 0;
 }
   
 
@@ -180,16 +290,23 @@ size_t zchunkEngineProcess(ZChunkEngine *z,
 /* Deallocate memory */
 void zchunkEngineClose(ZChunkEngine *z) {
   int err;
+
+#ifdef ZCHUNK_SUPPORT_GZIP
   if (z->alg == ZCHUNK_ALG_GZIP) {
     if (z->dir == ZCHUNK_DIR_COMPRESS) {
-      err = deflateEnd(&z->gz);
+      err = deflateEnd(&z->gz_state->gz);
     } else {
-      err = inflateEnd(&z->gz);
+      err = inflateEnd(&z->gz_state->gz);
     }
     if (err != Z_OK) {
       fprintf(stderr, "zchunkEngineClose error %d\n", err);
     }
-  }    
+  }
+#endif
+  
+  free(z->gz_state);
+  free(z->bz_state);
+  free(z->fzstd_state);
 }
 
 
@@ -273,6 +390,8 @@ int zchunkIndexRead(ZChunkIndex *index, const char *filename) {
           index->alg = ZCHUNK_ALG_BZIP;
         } else if (word[0] == 'g') {
           index->alg = ZCHUNK_ALG_GZIP;
+        } else if (word[0] == 'f') {
+          index->alg = ZCHUNK_ALG_FZSTD;
         } else {
           fprintf(stderr, "Error reading chunk index, line %d, "
                   "invalid compression algorithm \"%s\".\n", line_no, word);
@@ -516,13 +635,14 @@ int zchunkIndexWrite(ZChunkIndex *index, const char *filename) {
   }
   
   fprintf(outf, "# compression: %s\n",
-          index->alg == ZCHUNK_ALG_GZIP ? "gzip" : "bzip2");
+          index->alg == ZCHUNK_ALG_GZIP ? "gzip" :
+          index->alg == ZCHUNK_ALG_BZIP ? "bzip2" : "fzstd");
   if (index->has_hash)
     fprintf(outf, "# hash: fnv64\n");
 
   for (i=0; i < index->size; i++) {
     if (index->has_hash)
-      fprintf(outf, "%" PRIu64 "\t%" PRIu64 "\t%" PRIx64 "\n",
+      fprintf(outf, "%" PRIu64 "\t%" PRIu64 "\t%016" PRIx64 "\n",
               index->chunks[i].compressed_end,
               index->chunks[i].original_end, 
               index->chunks[i].hash);

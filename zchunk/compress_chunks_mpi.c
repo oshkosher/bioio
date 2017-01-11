@@ -154,6 +154,11 @@ int parseOpt(int argc, char **argv, Options *opt) {
       alg = ZCHUNK_ALG_GZIP;
     }
 
+    /* accept z or zstd */
+    else if (arg[1] == 'z') {
+      alg = ZCHUNK_ALG_FZSTD;
+    }
+
     /* enable threads */
     else if (arg[1] == 't') {
       opt->use_threads = 1;
@@ -161,8 +166,10 @@ int parseOpt(int argc, char **argv, Options *opt) {
 
     else if (!strcmp(arg, "-f")) {
       strat = ZCHUNK_STRATEGY_FAST;
+      /*
       opt->zopt.zlib_compression_level = Z_DEFAULT_COMPRESSION;
       opt->zopt.bzlib_block_size = 3;
+      */
     }
 
     else if (!strcmp(arg, "-a")) {
@@ -241,6 +248,7 @@ void printHelp() {
   printf(
 "   -g : use gzip to compress (default)\n"
 "   -b : use bzip2 to compress\n"
+"   -z : use Facebook ZSTD to compress\n"
 "   -f : use faster compression\n"
 "   -a : disable chunk hash computation\n"
 "   -k <size> : set chunk size (%s by default) may use k, m, g suffixes\n"

@@ -1,8 +1,7 @@
 #ifndef __ZCHUNK_H__
 #define __ZCHUNK_H__
 
-#include <zlib.h>  /* gzip */
-#include <bzlib.h> /* bzip2 */
+#include <stdio.h>
 #include <stdint.h>
 #ifdef ZCHUNK_MPI
 #include "mpi.h"
@@ -10,8 +9,9 @@
 
 
 typedef enum {
-  ZCHUNK_ALG_GZIP = 1,
-  ZCHUNK_ALG_BZIP = 2
+  ZCHUNK_ALG_GZIP = 1, /* gzip */
+  ZCHUNK_ALG_BZIP = 2, /* bzip2 */
+  ZCHUNK_ALG_FZSTD = 3  /* Facebook's ZSTD */
 } ZChunkCompressionAlgorithm;
 
 typedef enum {
@@ -24,6 +24,10 @@ typedef enum {
   ZCHUNK_STRATEGY_FAST = 2
 } ZChunkCompressionStrategy;
 
+
+struct gz_state_struct;
+struct bz_state_struct;
+struct fzstd_state_struct;
 
 /* Options for compression and decompression.
    Support gzip or bzip2 compression.
@@ -46,38 +50,10 @@ typedef struct ZChunkEngine {
   */
   ZChunkDirection dir;
 
+  struct gz_state_struct *gz_state;
+  struct bz_state_struct *bz_state;
+  struct fzstd_state_struct *fzstd_state;
   
-  /* zlib (gzip) options
-     See http://www.zlib.net/manual.html*/
-
-  z_stream gz;
-
-  /* Z_BEST_COMPRESSION, Z_DEFAULT_COMPRESSION, or Z_BEST_SPEED */
-  int zlib_compression_level;
-
-  /* compression window size (1..15), add 16 for gzip stream (rather
-     than raw zlib */
-  int zlib_window_bits;
-
-  /* 1 (least memory, slow) to 9 (most memory, fast) */  
-  int zlib_mem_level;
-
-
-  /* bzlib (bzip2) options
-     See http://www.bzip.org/1.0.5/bzip2-manual-1.0.5.html */
-
-  bz_stream bz;
-  
-  /* [1..9], increasing memory usage and compression rate */
-  int bzlib_block_size;
-  
-  /* [0..4], silent to verbose */
-  int bzlib_verbose;
-  
-  /* [0..250], affects performance with very repetitive data,
-     default is 30, 0 yields the default */
-  int bzlib_work_factor;
-
 } ZChunkEngine;
 
 

@@ -15,4 +15,4 @@ zchunk_verify_mpi
 read_speed
 write_speed
 pbs.*
-
+zstd

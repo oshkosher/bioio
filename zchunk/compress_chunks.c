@@ -48,7 +48,7 @@ int compressFileChunks(const char *infile_name, const char *outfile_name,
   FILE *infile, *outfile;
   ZChunkEngine z;
   ZChunkIndex index;
-  ZChunkCompressionAlgorithm alg = ZCHUNK_ALG_GZIP;
+  ZChunkCompressionAlgorithm alg = ZCHUNK_ALG_FZSTD;
 
   zchunkEngineInit(&z, alg, ZCHUNK_DIR_COMPRESS,
                    ZCHUNK_STRATEGY_MAX_COMPRESSION);
