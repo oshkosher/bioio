@@ -1,0 +1,13 @@
+*.gz
+*.bz2
+*.nex
+*.o
+*~
+*.exe
+zstd
+zstd-cygwin
+zstd-ubuntu
+foo*
+bar*
+*.zl
+*.zlines

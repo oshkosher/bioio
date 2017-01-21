@@ -1,10 +1,10 @@
-EXECS = read_nexus mmap_string_pool
+EXECS = read_nexus mmap_string_pool nexus_chars
 
 all: $(EXECS)
 
 # add librt for clock_gettime()
 LIBS=-lrt
-OPT=-g
+OPT=-O2
 
 # Blue Waters
 ifeq "$(shell hostname | head -c 8)" "h2ologin"
@@ -18,6 +18,9 @@ MPILIB=-lmpi
 endif
 
 read_nexus: read_nexus.c nexus_lexer.o nexus.tab.o nexus_parse.o
+	$(CC) $^ $(LIBS) -o $@
+
+nexus_chars: nexus_chars.c nexus_lexer.o nexus.tab.o nexus_parse.o
 	$(CC) $^ $(LIBS) -o $@
 
 testparse: read_nexus example.nex
