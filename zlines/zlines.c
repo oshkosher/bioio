@@ -13,7 +13,7 @@
 
 #define DEFAULT_BLOCK_SIZE (4 * 1024 * 1024)
 
-enum ProgramMode {PROG_CREATE, PROG_DETAILS, PROG_VERIFY};
+enum ProgramMode {PROG_CREATE, PROG_DETAILS, PROG_VERIFY, PROG_GET};
 
 typedef uint64_t u64;
 
@@ -23,6 +23,10 @@ typedef struct {
   int block_size;
   const char *input_filename;
   const char *output_filename;
+
+  /* used in "get" mode */
+  u64 *line_numbers;
+  int line_number_count;
 } Options;
 
 
@@ -35,6 +39,7 @@ u64 getFileSize(const char *filename);
 int createFile(Options *opt);
 int fileDetails(Options *opt);
 int verifyFile(Options *opt);
+int getLines(Options *opt);
 
 int main(int argc, char **argv) {
   Options opt;
@@ -50,6 +55,9 @@ int main(int argc, char **argv) {
 
   case PROG_VERIFY:
     return verifyFile(&opt);
+
+  case PROG_GET:
+    return getLines(&opt);
   }  
 
   return 0;
@@ -57,11 +65,13 @@ int main(int argc, char **argv) {
 
 
 int parseArgs(int argc, char **argv, Options *opt) {
-  int argno = 1;
+  int argno = 1, i;
 
   opt->mode = PROG_CREATE;
   opt->block_size = DEFAULT_BLOCK_SIZE;
   opt->input_filename = opt->output_filename = NULL;
+  opt->line_numbers = 0;
+  opt->line_number_count = 0;
 
   if (argc < 2) printHelp();
   
@@ -71,6 +81,8 @@ int parseArgs(int argc, char **argv, Options *opt) {
     opt->mode = PROG_DETAILS;
   } else if (!strcmp(argv[argno], "verify")) {
     opt->mode = PROG_VERIFY;
+  } else if (!strcmp(argv[argno], "get")) {
+    opt->mode = PROG_GET;
   } else {
     fprintf(stderr, "Invalid command: \"%s\"\n", argv[argno]);
     return 1;
@@ -113,8 +125,26 @@ int parseArgs(int argc, char **argv, Options *opt) {
     opt->input_filename = argv[argno++];
     opt->output_filename = argv[argno++];
     break;
+
+  case PROG_GET:
+    if (argno+1 >= argc) printHelp();
+    opt->input_filename = argv[argno++];
+
+    opt->line_number_count = argc - argno;
+    opt->line_numbers = (u64*) malloc(sizeof(u64) * opt->line_number_count);
+    assert(opt->line_numbers);
+
+    i = 0;
+    while(argno < argc) {
+      if (1 != sscanf(argv[argno], "%" SCNu64, &opt->line_numbers[i])) {
+        fprintf(stderr, "Invalid line number \"%s\"\n", argv[argno]);
+        return 1;
+      }
+      argno++;
+      i++;
+    }
   }
-    
+  
   return 0;
 }
 
@@ -132,6 +162,9 @@ void printHelp() {
           "\n"
           "  zlines verify <input text file> <zlines file>\n"
           "    tests if the zlines file matches the given text file\n"
+          "\n"
+          "  zlines get <zlines file> [line#...]\n"
+          "    extracts the given lines from the file and prints them\n"
           "\n");
   exit(1);
 }
@@ -335,3 +368,47 @@ int verifyFile(Options *opt) {
   return 0;
 }
 
+
+int getLines(Options *opt) {
+  ZlineFile *zf;
+  int i;
+  u64 line_idx, file_line_count;
+  char *line;
+
+  zf = ZlineFile_read(opt->input_filename);
+  if (!zf) {
+    fprintf(stderr, "Failed to open \"%s\" for reading.\n",
+            opt->input_filename);
+    return 1;
+  }
+
+  /* number of lines in the file */
+  file_line_count = ZlineFile_line_count(zf);
+
+  /* loop through the array of lines requested */
+  for (i=0; i < opt->line_number_count; i++) {
+
+    line_idx = opt->line_numbers[i];
+
+    /* check that the line index is in bounds */
+    if (line_idx >= file_line_count) {
+      printf("invalid line number: %" PRIu64 " (max %" PRIu64 ")\n",
+             line_idx, file_line_count - 1);
+    } else {
+
+      /* extract one line from the file */
+      line = ZlineFile_get_line(zf, line_idx, NULL);
+
+      puts(line);
+      free(line);
+    }
+  }
+
+  free(opt->line_numbers);
+  
+  ZlineFile_close(zf);
+  
+  return 0;
+}
+
+      
