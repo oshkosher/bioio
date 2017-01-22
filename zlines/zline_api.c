@@ -435,6 +435,14 @@ uint64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
     return zf->lines[line_idx].length;
 }
 
+/* Returns the length of the longest line. */
+uint64_t ZlineFile_max_line_length(ZlineFile *zf) {
+  u64 i, max_len = 0;
+  for (i=0; i < zf->line_count; i++)
+    max_len = MAX(max_len, zf->lines[i].length);
+  return max_len;
+}
+
 /* read a block, decompress it, store the decompressed result in outbuf,
    store the decompressed size in outbuf_size, and store the index of the block
    in outbuf_idx. */

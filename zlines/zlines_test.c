@@ -12,6 +12,7 @@
 int main(int argc, char **argv) {
   ZlineFile *zf;
   uint64_t i, count;
+  char *line = NULL;
 
   if (argc != 2) {
     printf("\n  zlines_test <zlines_file>\n\n");
@@ -25,10 +26,11 @@ int main(int argc, char **argv) {
   }
 
   count = ZlineFile_line_count(zf);
+  line = (char*) malloc(ZlineFile_max_line_length(zf) + 1);
   for (i = 0; i < count; i++) {
-    char *line = ZlineFile_get_line(zf, i, NULL);
-    free(line);
+    ZlineFile_get_line(zf, i, line);
   }
+  free(line);
 
   printf("%" PRIu64 " lines read.\n", count);
 

@@ -1,6 +1,7 @@
 *.gz
 *.bz2
 *.nex
+*.zst
 zstd
 zstd-cygwin
 zstd-ubuntu
@@ -8,3 +9,5 @@ foo*
 bar*
 *.zl
 *.zlines
+zlines
+zlines_test

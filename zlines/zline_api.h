@@ -89,6 +89,9 @@ uint64_t ZlineFile_line_count(ZlineFile *zf);
 /* Returns the length of the given line. */
 uint64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
 
+/* Returns the length of the longest line. */
+uint64_t ZlineFile_max_line_length(ZlineFile *zf);
+
 /* Reads a line from the file. If buf is NULL, memory to store the line will
    be allocated with malloc. The caller must deallocate the memory with free().
    If buf is not NULL, the line will be written to that location.
