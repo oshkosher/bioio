@@ -43,8 +43,10 @@ void chars_item(void *user_data, const char *name, const char *data) {
 void section_end(void *user_data, int section_id, int line_no,
                  long file_offset) {
   if (section_id == NEXUS_SECTION_CHARACTERS) {
+    /*
     fprintf(stderr, "%d rows read, lengths %d..%d\n", rows_read,
             min_len, max_len);
+    */
     exit(0);
   }
 }
