@@ -31,6 +31,7 @@ int main(int argc, char **argv) {
     ZlineFile_get_line(zf, i, line);
   }
   free(line);
+  ZlineFile_close(zf);
 
   printf("%" PRIu64 " lines read.\n", count);
 
