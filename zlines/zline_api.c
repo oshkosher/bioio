@@ -210,8 +210,10 @@ static int flushBlock(ZlineFile *zf) {
   zf->outbuf_size = block->compressed_length;
   next_block_start = block->offset + block->compressed_length;
 
+  /*
   printf("block %" PRIu64 " %d bytes -> %d bytes\n", zf->block_count,
          zf->inbuf_size, zf->outbuf_size);
+  */
 
   /* check we're at the expected offset in the file */
   /* XXX slow assert */

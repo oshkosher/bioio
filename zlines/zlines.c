@@ -12,6 +12,7 @@
 #include "zline_api.h"
 
 #define DEFAULT_BLOCK_SIZE (4 * 1024 * 1024)
+#define CREATE_FILE_UPDATE_FREQUENCY_BYTES (50*1024*1024)
 
 enum ProgramMode {PROG_CREATE, PROG_DETAILS, PROG_VERIFY, PROG_GET};
 
@@ -35,11 +36,13 @@ void printHelp();
 int processFile(Options *opt, FILE *input_fp);
 FILE *openFileOrStdin(const char *filename);
 u64 getFileSize(const char *filename);
+const char *commafy(char *buf, u64 n);
 
 int createFile(Options *opt);
 int fileDetails(Options *opt);
 int verifyFile(Options *opt);
 int getLines(Options *opt);
+
 
 int main(int argc, char **argv) {
   Options opt;
@@ -169,6 +172,9 @@ void printHelp() {
   exit(1);
 }
 
+
+/* If filename is "-", return stdin. Otherwise, open the given file
+   for reading. */
 FILE *openFileOrStdin(const char *filename) {
   FILE *f = stdin;
   
@@ -194,6 +200,44 @@ u64 getFileSize(const char *filename) {
 }
 
 
+/* format a number with commas every 3 digits: 1234567 -> "1,234,567".
+   The string will be written to buf (which must be at least 21 bytes),
+   and buf will be returned.
+*/
+const char *commafy(char *buf, u64 n) {
+  unsigned len;
+  u64 factor;
+  char *p;
+
+  if (n == 0) {
+    buf[0] = '0';
+    buf[1] = '\0';
+    return buf;
+  }
+
+  /* find the length */
+  len=1;
+  factor=1;
+  while ((n/factor) >= 10) {
+    len++;
+    factor *= 10;
+  }
+
+  p = buf;
+  while (len > 0) {
+    int digit = n/factor;
+    *p++ = '0' + digit;
+    n -= digit * factor;
+    len--;
+    if (len > 0 && (len % 3) == 0) *p++ = ',';
+    factor /= 10;
+  }
+  *p++ = '\0';
+
+  return buf;
+}
+
+
 /* Trim newlines from the end of the line, either Unix-style or DOS. */
 size_t trimNewline(char *line, size_t len) {
   while (len > 0 &&
@@ -203,21 +247,42 @@ size_t trimNewline(char *line, size_t len) {
   }
   return len;
 }
-    
 
-  
+
+/* Write one line of status output, leading with a carriage return
+   so it overwrites the current output line. */
+void statusOutput(u64 line_count, u64 byte_count, u64 file_size) {
+  char linebuf[50], bytebuf[50];
+  printf("\r%s lines, %s bytes", commafy(linebuf, line_count),
+         commafy(bytebuf, byte_count));
+  if (file_size)
+    printf(" of %s (%.1f%%)", commafy(bytebuf, file_size),
+           byte_count * 100.0 / file_size);
+  fflush(stdout);
+}
+
+
+/* Read a text file and create a zlines file from it. */
 int createFile(Options *opt) {
   ZlineFile *zf;
-  char *line = NULL;
+  char *line = NULL, buf1[50], buf2[50];
   ssize_t line_len;
   size_t buf_len = 0;
   int err = 0;
-  u64 idx, total_line_bytes = 0, total_zblock_size = 0, file_size;
-  u64 line_count, block_count, min_line_len = UINT64_MAX, max_line_len = 0;
+  u64 idx, total_bytes = 0, total_zblock_size = 0;
+  u64 input_file_size = 0, output_file_size;
+  u64 min_line_len = UINT64_MAX, max_line_len = 0;
+  u64 next_update = CREATE_FILE_UPDATE_FREQUENCY_BYTES;
 
+  /* open the text file */
   FILE *input_fp = openFileOrStdin(opt->input_filename);
   if (!input_fp) return 1;
-  
+
+  /* if it's not stdin, get the size of the file */
+  if (input_fp != stdin)
+    input_file_size = getFileSize(opt->input_filename);
+
+  /* open the zlines file */
   zf = ZlineFile_create(opt->output_filename, opt->block_size);
   if (!zf) {
     fprintf(stderr, "Error: cannot write \"%s\"\n", opt->output_filename);
@@ -225,43 +290,58 @@ int createFile(Options *opt) {
   }
 
   while (1) {
+    /* read a line */
     line_len = getline(&line, &buf_len, input_fp);
     if (line_len == -1) break;
-    line_len = trimNewline(line, line_len);
-    total_line_bytes += line_len;
+    total_bytes += line_len;
 
+    /* output a status update now and then */
+    if (total_bytes >= next_update) {
+      statusOutput(zf->line_count, total_bytes, input_file_size);
+      next_update = total_bytes + CREATE_FILE_UPDATE_FREQUENCY_BYTES;
+    }
+
+    /* remove the trailing newline from the line */
+    line_len = trimNewline(line, line_len);
+
+    /* track the maximum and minimum line lengths */
     if ((u64)line_len > max_line_len) max_line_len = line_len;
     if ((u64)line_len < min_line_len) min_line_len = line_len;
-    
+
+    /* add the line to the zlines file */
     if (ZlineFile_add_line(zf, line, line_len)) {
       err = 1;
       break;
     }
   }
-  
-  free(line);
+
+  /* print a final status update */
+  statusOutput(zf->line_count, total_bytes, input_file_size);
+
+  /* close the zlines file because the index and header aren't written until
+     the file is closed. */
   ZlineFile_close(zf);
+  free(line);
   if (input_fp != stdin) fclose(input_fp);
 
-  file_size = getFileSize(opt->output_filename);
+  output_file_size = getFileSize(opt->output_filename);
 
+  /* reopen the zlines file for reading */
   zf = ZlineFile_read(opt->output_filename);
   assert(zf);
 
+  /* use internal data structure to compute the compressed size of
+     the data */
   for (idx = 0; idx < zf->block_count; idx++)
     total_zblock_size += zf->blocks[idx].compressed_length;
 
-  line_count = zf->line_count;
-  block_count = zf->block_count;
-
-  printf("%" PRIu64 " lines of length %" PRIu64 "..%" PRIu64 ", %"
-         PRIu64 " bytes\n"
-         "compressed to %" PRIu64 " blocks, %"
-         PRIu64 " bytes with %" PRIu64 " bytes overhead\n", 
-         line_count, min_line_len, max_line_len,
-         total_line_bytes, block_count,
-         total_zblock_size, file_size - total_zblock_size);
-         
+  printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
+         "compressed to %" PRIu64 " blocks, %s"
+         " bytes with %s bytes overhead\n", 
+         min_line_len, max_line_len,
+         zf->block_count, commafy(buf1, total_zblock_size),
+         commafy(buf2, output_file_size - total_zblock_size));
+    
   ZlineFile_close(zf);
 
   return err;
