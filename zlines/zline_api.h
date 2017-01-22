@@ -42,6 +42,7 @@ typedef struct {
   const char *filename;
   FILE *fp;
   int mode;
+  int is_index_compressed;
 
   /* buffer holding incoming data before compressing it */
   char *inbuf;
