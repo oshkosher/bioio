@@ -380,10 +380,6 @@ void ZlineFile_close(ZlineFile *zf) {
     
     fwrite(&size_block_array_compressed, sizeof(u64), 1, zf->fp);
     fwrite(&size_line_array_compressed, sizeof(u64), 1, zf->fp);
-
-    printf("block index size %d, line index size %d\n",
-           (int)size_block_array_compressed,
-           (int)size_line_array_compressed);
   }
 
   /* write uncompressed index */
