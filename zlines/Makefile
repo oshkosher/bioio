@@ -1,4 +1,4 @@
-EXECS = zlines zlines_test
+EXECS = zlines zlines_test transpose create_2d_data
 
 all: $(EXECS)
 
@@ -20,6 +20,12 @@ zline_api.o: zline_api.c zline_api.h $(ZSTD_LIB_FILE)
 
 zlines_test: zlines_test.c zline_api.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
+
+transpose: transpose.c
+	$(CC) $^ $(LIBS) -o $@
+
+create_2d_data: create_2d_data.c
+	$(CC) $^ $(LIBS) -o $@
 
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:
