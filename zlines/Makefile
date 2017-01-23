@@ -12,16 +12,19 @@ CFLAGS=-O3 -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
 
-zlines: zlines.c zline_api.o
+zlines: zlines.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
 
 zline_api.o: zline_api.c zline_api.h $(ZSTD_LIB_FILE)
 	$(CC) -c $<
 
-zlines_test: zlines_test.c zline_api.o
+common.o: common.c common.h
+	$(CC) -c $<
+
+zlines_test: zlines_test.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
 
-transpose: transpose.c
+transpose: transpose.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 create_2d_data: create_2d_data.c

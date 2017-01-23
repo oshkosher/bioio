@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include "zstd.h"
 #include "zline_api.h"
+#include "common.h"
 
 #define DEFAULT_BLOCK_SIZE (4 * 1024 * 1024)
 #define CREATE_FILE_UPDATE_FREQUENCY_BYTES (50*1024*1024)
@@ -34,9 +35,6 @@ typedef struct {
 int parseArgs(int argc, char **argv, Options *opt);
 void printHelp();
 int processFile(Options *opt, FILE *input_fp);
-FILE *openFileOrStdin(const char *filename);
-u64 getFileSize(const char *filename);
-const char *commafy(char *buf, u64 n);
 
 int createFile(Options *opt);
 int fileDetails(Options *opt);
@@ -173,77 +171,13 @@ void printHelp() {
 }
 
 
-/* If filename is "-", return stdin. Otherwise, open the given file
-   for reading. */
-FILE *openFileOrStdin(const char *filename) {
-  FILE *f = stdin;
-  
-  if (strcmp(filename, "-")) {
-    f = fopen(filename, "rt");
-    if (!f) {
-      fprintf(stderr, "Error: cannot read \"%s\"\n", filename);
-    }
-  }
-  return f;
-}
-
-
-u64 getFileSize(const char *filename) {
-   struct stat stats;
-   if (stat(filename, &stats)) {
-    fprintf(stderr, "Error getting size of \"%s\": %s\n",
-	    filename, strerror(errno));
-    return 0;
-  } else {
-    return stats.st_size;
-  }
-}
-
-
-/* format a number with commas every 3 digits: 1234567 -> "1,234,567".
-   The string will be written to buf (which must be at least 21 bytes),
-   and buf will be returned.
-*/
-const char *commafy(char *buf, u64 n) {
-  unsigned len;
-  u64 factor;
-  char *p;
-
-  if (n == 0) {
-    buf[0] = '0';
-    buf[1] = '\0';
-    return buf;
-  }
-
-  /* find the length */
-  len=1;
-  factor=1;
-  while ((n/factor) >= 10) {
-    len++;
-    factor *= 10;
-  }
-
-  p = buf;
-  while (len > 0) {
-    int digit = n/factor;
-    *p++ = '0' + digit;
-    n -= digit * factor;
-    len--;
-    if (len > 0 && (len % 3) == 0) *p++ = ',';
-    factor /= 10;
-  }
-  *p++ = '\0';
-
-  return buf;
-}
-
-
 /* Trim newlines from the end of the line, either Unix-style or DOS. */
 size_t trimNewline(char *line, size_t len) {
-  while (len > 0 &&
-         (line[len-1] == 0x0A ||
-          line[len-1] == 0x0D)) {
+  if (line[len-1] == '\n') {
     line[--len] = 0;
+    if (line[len-1] == '\r') {
+      line[--len] = 0;
+    }
   }
   return len;
 }

@@ -9,6 +9,7 @@
 #include <errno.h>
 #include "zline_api.h"
 #include "zstd.h"
+#include "common.h"
 
 #define INITIAL_BLOCK_CAPACITY 100
 #define INITIAL_LINE_CAPACITY 1000
@@ -25,7 +26,6 @@
 
 typedef uint64_t u64;
 
-static u64 getFileSize(const char *filename);
 static int writeHeader(ZlineFile *zf);
 static int readHeader(ZlineFile *zf);
 static void blocksInsureCapacity(ZlineFile *zf, u64 capacity);
@@ -86,18 +86,6 @@ ZlineFile *ZlineFile_create(const char *output_filename, int block_size) {
   free(zf->lines);
   free(zf);
   return NULL;
-}
-
-
-static u64 getFileSize(const char *filename) {
-   struct stat stats;
-   if (stat(filename, &stats)) {
-    fprintf(stderr, "Error getting size of \"%s\": %s\n",
-	    filename, strerror(errno));
-    return 0;
-  } else {
-    return stats.st_size;
-  }
 }
 
 

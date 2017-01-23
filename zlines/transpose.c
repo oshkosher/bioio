@@ -15,6 +15,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include "common.h"
 
 typedef uint64_t u64;
 
@@ -49,9 +50,6 @@ typedef struct {
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
 void printHelp();
-u64 getFileSize(const char *filename);
-double getSeconds();
-int mapFile(const char *filename, int for_writing, char **data, u64 *length);
 int getFileDimensions(const char *in_file, u64 length,
                       int *n_cols, int *n_rows, int *newline_type);
 #define newlineLength(newline_type) (newline_type)
@@ -144,64 +142,6 @@ void printHelp() {
          "  Do a bytewise transpose of the lines of the given file.\n"
          "  Every line in the file must be the same length.\n\n");
   exit(1);
-}
-
-
-u64 getFileSize(const char *filename) {
-   struct stat stats;
-   if (stat(filename, &stats)) {
-    fprintf(stderr, "Error getting size of \"%s\": %s\n",
-	    filename, strerror(errno));
-    return 0;
-  } else {
-    return stats.st_size;
-  }
-}
-
-
-double getSeconds() {
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return t.tv_sec + 1e-9 * t.tv_nsec;
-}
-
-
-/* If for_writing is nonzero, the file will be set to the length *length.
-   Otherwise, *length will be set to the length of the file. */
-int mapFile(const char *filename, int for_writing, char **data, u64 *length) {
-  int fd, flags;
-  mode_t mode = 0;
-
-  if (for_writing) {
-    flags = O_RDWR | O_CREAT | O_TRUNC;
-    mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-  } else {
-    flags = O_RDONLY;
-    *length = getFileSize(filename);
-    if (*length == 0) return -1;
-  }
-
-  if (*length >= ((u64)1) << 32 && sizeof(size_t) < 8) {
-    fprintf(stderr, "Cannot map large files in 32 bit mode\n");
-    return -1;
-  }
-  
-  fd = open(filename, flags, mode);
-  if (fd == -1) return -1;
-
-  if (for_writing) ftruncate(fd, *length);
-  
-  *data = (char*) mmap(NULL, *length, for_writing ? PROT_WRITE : PROT_READ,
-                       MAP_SHARED, fd, 0);
-  if (*data == MAP_FAILED) {
-    fprintf(stderr, "Failed to mmap %s: %s\n", filename, strerror(errno));
-    close(fd);
-    return -1;
-  }
-
-  close(fd);
-
-  return 0;
 }
 
 
