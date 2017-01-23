@@ -27,6 +27,15 @@ transpose: transpose.c
 create_2d_data: create_2d_data.c
 	$(CC) $^ $(LIBS) -o $@
 
+test: transpose test_transpose
+
+test_transpose:
+	./create_2d_data 1234 5678 > foo
+	./transpose foo bar
+	./transpose bar foo2
+	shasum foo foo2
+	rm foo bar foo2
+
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:
 	git clone https://github.com/facebook/zstd.git
