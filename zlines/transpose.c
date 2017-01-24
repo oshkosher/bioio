@@ -1,6 +1,20 @@
 /*
   Do a bytewise tranpose of a text file.
 
+  For example, given this input:
+    RGk
+    ebU
+    LwP
+    Bkl
+    Jd7
+  produce this output:
+    ReLBJ
+    Gbwkd
+    kUPl7
+
+  The goal of this is to support arbitrarily large data sets (much larger than
+  memory) efficiently.
+
   Ed Karrels, edk@illinois.edu, January 2017
 */
 
@@ -19,8 +33,6 @@
 
 typedef uint64_t u64;
 
-#define NEWLINE_UNIX 1
-#define NEWLINE_DOS 2
 
 typedef struct {
   char *data;
@@ -29,22 +41,27 @@ typedef struct {
 
 Array2d in, out;
 
+/* Get a pointer to a character in an Array2d. 'a' should be an Array2d,
+   not a pointer to one. */
 #define Array2d_ptr(a, row, col) ((a).data + (u64)(row) * (a).row_stride + (col))
 
 /* If nonzero, blocks read will progress to the right, then down, and
    blocks written will progress down, then right.
    If zero, the the opposite. */
-int move_right;
+int move_right = 0;
 
 /* The data is processed in blocks. This is the number of rows in 
    each block read and number of columns in each block written. */
-int read_block_height;
+int read_block_height = 256;
 
 /* Number of columns in each block read and number of rows
    in each block written. */
-int read_block_width;
+int read_block_width = 256;
 
-int cache_ob_size;
+int cache_ob_size = 256;
+
+#define NEWLINE_UNIX 1
+#define NEWLINE_DOS 2
 
 int newline_type;
 
@@ -57,10 +74,17 @@ int getFileDimensions(Array2d *array, u64 length, int *newline_type);
 #define newlineName(newline_type) ((newline_type)==(NEWLINE_DOS)?"DOS":"unix")
 void writeNewline(char *dest, int newline_type);
 
+/* transpose the data using a block algorithm. */
 void transposeBlocks();
+
+/* transpose the data using a cache-oblivious algorithm. */
 void transposeCacheOblivious();
+
+/* used by transposeCacheOblivious() */
 void transposeCacheObliviousRecurse(int block_top, int block_left,
                                     int block_height, int block_width);
+
+/* Transpose one tile using a simple algorithm. */
 void transposeTile(int block_left, int block_right,
                    int block_top, int block_bottom);
 
@@ -73,11 +97,6 @@ int main(int argc, char **argv) {
   double start_time, elapsed, mbps;
 
   if (argc != 3) printHelp();
-
-  move_right = 0;
-  read_block_height = 256;  /* no more than 512 */
-  read_block_width = 256;   /* at least 256 */
-  cache_ob_size = 256;
   
   if (mapFile(argv[1], 0, (char**)&in.data, &in_file_len)) {
     fprintf(stderr, "Failed to open %s\n", argv[1]);
