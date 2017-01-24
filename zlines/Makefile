@@ -30,7 +30,7 @@ transpose: transpose.c common.o
 create_2d_data: create_2d_data.c
 	$(CC) $^ $(LIBS) -o $@
 
-test: transpose test_transpose
+test: create_2d_data transpose test_transpose
 
 test_transpose:
 	./create_2d_data 1234 5678 > foo

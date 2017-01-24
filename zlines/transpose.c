@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -36,7 +37,7 @@ typedef uint64_t u64;
 
 typedef struct {
   char *data;
-  int n_cols, n_rows, row_stride;
+  int n_rows, n_cols, row_stride;
 } Array2d;
 
 Array2d in, out;
@@ -58,7 +59,10 @@ int read_block_height = 256;
    in each block written. */
 int read_block_width = 256;
 
-int cache_ob_size = 256;
+int cache_ob_size = 128;
+
+int default_temp_width = 4096;
+int default_temp_height = 4096;
 
 #define NEWLINE_UNIX 1
 #define NEWLINE_DOS 2
@@ -73,21 +77,45 @@ int getFileDimensions(Array2d *array, u64 length, int *newline_type);
 #define newlineLength(newline_type) (newline_type)
 #define newlineName(newline_type) ((newline_type)==(NEWLINE_DOS)?"DOS":"unix")
 void writeNewline(char *dest, int newline_type);
+int createTempBuffer(Array2d *temp);
+
+/* Transpose a 2d array. This will call one of the other transpose routines,
+   depending on the size of the array. */
+void transpose
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width);
+
+/* Transpose large chunks from the input file into memory, then copy them
+   to the output file. */
+void transposeTwoStage
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width);
 
 /* transpose the data using a block algorithm. */
-void transposeBlocks();
+void transposeBlocks
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width);
 
 /* transpose the data using a cache-oblivious algorithm. */
-void transposeCacheOblivious();
-
-/* used by transposeCacheOblivious() */
-void transposeCacheObliviousRecurse(int block_top, int block_left,
-                                    int block_height, int block_width);
+void transposeCacheOblivious
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width);
 
 /* Transpose one tile using a simple algorithm. */
-void transposeTile(int block_left, int block_right,
-                   int block_top, int block_bottom);
+void transposeTile
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width);
 
+/* simple copy without transposing */
+void copy2d
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width);
 
 
 int main(int argc, char **argv) {
@@ -123,13 +151,13 @@ int main(int argc, char **argv) {
   }
 
   start_time = getSeconds();
-  
-  /* transposeBlocks(&opt); */
-  transposeCacheOblivious();
+
+  byte_count = (u64)in.n_rows * in.n_cols;
+
+  transposeTwoStage(&out, 0, 0, &in, 0, 0, in.n_rows, in.n_cols);
 
   putchar('\n');
   
-  byte_count = (u64)in.n_rows * in.n_cols;
   elapsed = getSeconds() - start_time;
   mbps = byte_count / (elapsed * 1024 * 1024);
   printf("transpose %dx%d = %" PRIu64" bytes in %.3fs at %.1f MiB/s\n",
@@ -210,29 +238,152 @@ void writeNewline(char *dest, int newline_type) {
 }
 
 
-void transposeTile(int block_left, int block_right,
-                   int block_top, int block_bottom) {
+void writeTileNewlines(int block_top, int block_bottom) {
+  int row;
+  for (row = block_top; row < block_bottom; row++)
+    writeNewline(Array2d_ptr(out, row, out.n_cols), newline_type);
+}
+
+
+int createTempBuffer(Array2d *temp) {
+  u64 temp_size = (u64)default_temp_width * default_temp_height;
+
+  assert(in.n_cols > 0 && in.n_rows > 0);
+
+  if (in.n_cols < default_temp_height) {
+    temp->n_rows = in.n_cols;
+    temp->n_cols = MIN(in.n_rows, temp_size / in.n_cols);
+  } else if (in.n_rows < default_temp_width) {
+    temp->n_cols = in.n_rows;
+    temp->n_rows = MIN(in.n_cols, temp_size / in.n_rows);
+  } else {
+    temp->n_rows = default_temp_height;
+    temp->n_cols = default_temp_width;
+  }
+
+  printf("temp buffer %dx%d\n", temp->n_rows, temp->n_cols);
+  temp->row_stride = temp->n_cols;
+  
+  temp->data = (char*) malloc((u64)temp->n_cols * temp->n_rows);
+  if (!temp->data) {
+    fprintf(stderr, "Failed to allocate %dx%d temp buffer.\n",
+            temp->n_rows, temp->n_cols);
+    return 1;
+  }
+
+  return 0;
+}
+
+
+/* Transpose a 2d array. This will call one of the other transpose routines,
+   depending on the size of the array. */
+void transpose
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width) {
+
+  if (height <= read_block_height &&
+      width <= read_block_width) {
+    transposeTile(dest, dest_row, dest_col, src, src_row, src_col,
+                  height, width);
+  } else {
+
+    u64 byte_count = (u64) height * width;
+
+    if (byte_count < 100*1024*1024) {
+
+      /* choose either by blocks or with the cache-oblivious algorithm */
+      
+      transposeCacheOblivious
+        /* transposeBlocks */
+        (dest, dest_row, dest_col, src, src_row, src_col,
+         height, width);
+
+    } else {
+      /* For really big arrays, first transpose large chunks from the
+         input file into memory, then copy them to the output file. */
+      transposeTwoStage(dest, dest_row, dest_col, src, src_row, src_col,
+                        height, width);
+    }
+  }
+}
+
+
+/* Transpose large chunks from the input file into memory, then copy them
+   to the output file. */
+void transposeTwoStage
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width) {
+  Array2d temp = {0};
+
+  if (createTempBuffer(&temp)) exit(1);
+
+  int x, y, block_width, block_height;
+  
+  for (x = 0; x < width; x += temp.n_cols) {
+    block_width = MIN(temp.n_cols, width - x);
+
+    for (y = 0; y < height; y += temp.n_rows) {
+      block_height = MIN(temp.n_rows, height - y);
+      /*
+      printf("transpose big tile (%d,%d) - (%d,%d)\n",
+             src_row + y, src_col + x,
+             src_row + y + block_height, src_col + x + block_width);
+      */
+      /* copy from the input file to temp, transposing along the way */
+      transposeCacheOblivious
+        (&temp, 0, 0,
+         src, src_row + y, src_col + x,
+         block_height, block_width);
+      /*
+      printf("write big tile to (%d,%d) - (%d,%d)\n",
+             dest_row + x, dest_col + y,
+             dest_row + x + block_width, dest_col + y + block_height);
+      */
+      /* copy from temp to the output file */
+
+      copy2d(&out, dest_row + x, dest_col + y,
+             &temp, 0, 0,
+             block_width, block_height);
+
+
+    }
+  }
+  
+
+  free(temp.data);
+}
+
+
+void transposeTile(Array2d *dest, int dest_row, int dest_col,
+                   Array2d *src, int src_row, int src_col,
+                   int height, int width) {
+
   int x, y;
   static u64 bytes_done = 0, next_report = 100*1000*1000;
 
   /*
-  printf("transpose (%d,%d) - (%d,%d)\n", block_top, block_left,
-         block_bottom, block_right);
+  printf("transpose (%d,%d) - (%d,%d)\n", src_row, src_col,
+         src_row + height, src_col + width);
   */
   
-  for (x = block_left; x < block_right; x++) {
-    for (y = block_top; y < block_bottom; y++) {
+  for (x = 0; x < width; x++) {
+    for (y = 0; y < height; y++) {
 
-      *Array2d_ptr(out, x, y) = *Array2d_ptr(in, y, x);
+      *Array2d_ptr(*dest, dest_row + x, dest_col + y) =
+        *Array2d_ptr(*src, src_row + y, src_col + x);
 
     }
 
+    /*
     if (block_bottom == out.n_cols) {
       writeNewline(Array2d_ptr(out, x, out.n_cols), newline_type);
     }
+    */
   }
 
-  bytes_done += (u64) (block_right - block_left) * (block_bottom - block_top);
+  bytes_done += (u64)width * height;
   if (bytes_done > next_report) {
     char buf1[50], buf2[50];
     printf("\r%s of %s bytes done", commafy(buf1, bytes_done), 
@@ -243,58 +394,83 @@ void transposeTile(int block_left, int block_right,
 }  
 
 
-void transposeBlocks() {
+/* height and width are in terms of the src array */
+void transposeBlocks(Array2d *dest, int dest_row, int dest_col,
+                     Array2d *src, int src_row, int src_col,
+                     int height, int width) {
 
-  int block_left, block_top, block_right, block_bottom;
+  int x, y, block_width, block_height;
+  
+  for (x = 0; x < width; x += read_block_width) {
+    block_width = MIN(read_block_width, width - x);
 
-  for (block_left = 0; block_left < in.n_cols;
-       block_left += read_block_width) {
+    for (y = 0; y < height; y += read_block_height) {
+      block_height = MIN(read_block_height, height - y);
 
-    block_right = MIN(block_left + read_block_width, in.n_cols);
+      transposeTile(dest, dest_row + x, dest_col + y,
+                    src, dest_row + y, src_col + x,
+                    block_height, block_width);
 
-    for (block_top = 0; block_top < in.n_rows;
-         block_top += read_block_height) {
-
-      block_bottom = MIN(block_top + read_block_height, in.n_rows);
-
-      transposeTile(block_left, block_right, block_top, block_bottom);
+      if (src_row + height == in.n_rows)
+        writeTileNewlines(src_col, src_col + width);
 
     }
-
-    printf("\r%d rows written", block_right);
-    fflush(stdout);
   }
-  putchar('\n');
+
 }
 
 
-void transposeCacheOblivious() {
-  transposeCacheObliviousRecurse(0, 0, in.n_rows, in.n_cols);
-}
+void transposeCacheOblivious(Array2d *dest, int dest_row, int dest_col,
+                             Array2d *src, int src_row, int src_col,
+                             int height, int width) {
 
-void transposeCacheObliviousRecurse(int block_top, int block_left,
-                                    int block_height, int block_width) {
-
-  if (block_height > cache_ob_size || block_width > cache_ob_size) {
+  if (height > cache_ob_size || width > cache_ob_size) {
     int half;
-    if (block_height > block_width) {
-      half = block_height / 2;
-      transposeCacheObliviousRecurse(block_top, block_left,
-                                     half, block_width);
-      transposeCacheObliviousRecurse(block_top+half, block_left,
-                                     block_height-half, block_width);
+    if (height > width) {
+      half = height / 2;
+      transposeCacheOblivious(dest, dest_row, dest_col,
+                              src, src_row, src_col,
+                              half, width);
+      transposeCacheOblivious(dest, dest_row, dest_col+half,
+                              src, src_row+half, src_col,
+                              height-half, width);
     } else {
-      half = block_width / 2;
-      transposeCacheObliviousRecurse(block_top, block_left,
-                                     block_height, half);
-      transposeCacheObliviousRecurse(block_top, block_left+half,
-                                     block_height, block_width-half);
+      half = width / 2;
+      transposeCacheOblivious(dest, dest_row, dest_col,
+                              src, src_row, src_col,
+                              height, half);
+      transposeCacheOblivious(dest, dest_row+half, dest_col,
+                              src, src_row, src_col+half,
+                              height, width-half);
     }
     return;
   }      
 
-  transposeTile(block_left, block_left + block_width,
-                block_top, block_top + block_height);
+  transposeTile(dest, dest_row, dest_col,
+                src, src_row, src_col, height, width);
+
+  if (src_row + height == in.n_rows)
+    writeTileNewlines(src_col, src_col + width);
+
 }
 
                 
+/* simple copy without transposing */
+void copy2d
+(Array2d *dest, int dest_row, int dest_col,
+ Array2d *src, int src_row, int src_col,
+ int height, int width) {
+
+  int row;
+
+  for (row = 0; row < height; row++) {
+    memcpy(Array2d_ptr(*dest, dest_row + row, dest_col),
+           Array2d_ptr(*src, src_row + row, src_col),
+           width);
+
+    if (dest == &out && dest_col + width == dest->n_cols)
+      writeNewline(Array2d_ptr(*dest, dest_row + row, dest->n_cols),
+                   newline_type);
+  }
+}
+
