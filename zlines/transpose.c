@@ -15,6 +15,16 @@
   The goal of this is to support arbitrarily large data sets (much larger than
   memory) efficiently.
 
+  Performance snapshot, 2015-01-25:
+% ./transpose run1.chars /data/bioio/run1.chars.t
+run1.chars has 1999999 rows of length 21946 with unix line endings
+temp buffer 4096x4096
+43,800,008,320 of 43,891,978,054 bytes done
+transpose 1999999x21946 = 43891978054 bytes in 1084.340s at 38.6 MiB/s
+
+  source drive: SSD, destination hard: HDD
+
+
   Ed Karrels, edk@illinois.edu, January 2017
 */
 
@@ -186,6 +196,7 @@ int getFileDimensions(Array2d *array, u64 length, int *newline_type) {
 
   data = array->data;
   
+  /* find the end of the first line of the file */
   first_newline = strchr(data, '\n');
   if (!first_newline) {
     fprintf(stderr, "Invalid input file: no line endings found\n");
@@ -197,6 +208,8 @@ int getFileDimensions(Array2d *array, u64 length, int *newline_type) {
     return -1;
   }
 
+  /* check for DOS (0x0d 0x0a) line endings, since having two bytes at the
+     end of each line will change the row stride of the data */
   if (first_newline[-1] == '\r') {
     *newline_type = NEWLINE_DOS;
   } else {
@@ -204,6 +217,10 @@ int getFileDimensions(Array2d *array, u64 length, int *newline_type) {
   }
   array->row_stride = (first_newline - data) + 1;
   array->n_cols = array->row_stride - newlineLength(*newline_type);
+
+  /* For this tool to work correctly, every line of the file must have
+     the same length. Don't check every line, but check that the file
+     size is an integer multiple of the line length. */
 
   array->n_rows = length / array->row_stride;
   if (length != array->n_rows * (u64)array->row_stride) {
@@ -214,7 +231,8 @@ int getFileDimensions(Array2d *array, u64 length, int *newline_type) {
     return -1;
   }
 
-  /* check a few more rows */
+  /* Check for the presence of a newline character in the right place
+     in a few more rows. */
 
   for (row=10; row < array->n_rows; row *= 10) {
     /* printf("check row %d\n", (int)row); */

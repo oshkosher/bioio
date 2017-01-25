@@ -1,4 +1,4 @@
-EXECS = zlines zlines_test transpose create_2d_data
+EXECS = zlines zlines_test transpose create_2d_data disk_speed
 
 all: $(EXECS)
 
@@ -29,6 +29,10 @@ transpose: transpose.c common.o
 
 create_2d_data: create_2d_data.c
 	$(CC) $^ $(LIBS) -o $@
+
+disk_speed: disk_speed.c common.o
+	$(CC) $^ $(LIBS) -o $@
+
 
 test: create_2d_data transpose test_transpose
 

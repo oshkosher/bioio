@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <errno.h>
+#include <inttypes.h>
 #include "common.h"
 
 typedef uint64_t u64;
@@ -61,7 +62,14 @@ int mapFile(const char *filename, int for_writing, char **data, u64 *length) {
   fd = open(filename, flags, mode);
   if (fd == -1) return -1;
 
-  if (for_writing) ftruncate(fd, *length);
+  if (for_writing) {
+    if (ftruncate(fd, *length)) {
+      fprintf(stderr, "Failed to set the length of %s to %" PRIu64 " bytes\n",
+              filename, *length);
+      close(fd);
+      return -1;
+    }
+  }
   
   *data = (char*) mmap(NULL, *length, for_writing ? PROT_WRITE : PROT_READ,
                        MAP_SHARED, fd, 0);
