@@ -7,7 +7,7 @@ ZSTD_LIB=-Lzstd/lib/ -lzstd
 ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
-LIBS=-lrt
+LIBS=
 CFLAGS=-O3 -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
