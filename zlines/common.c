@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
@@ -124,7 +125,12 @@ const char *commafy(char *buf, u64 n) {
 
 
 double getSeconds() {
+  /*
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec + 1e-9 * t.tv_nsec;
+  */
+  struct timeval t;
+  gettimeofday(&t, NULL);
+  return t.tv_sec + t.tv_usec * 0.000001;
 }
