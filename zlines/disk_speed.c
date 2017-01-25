@@ -61,8 +61,8 @@ int main(int argc, char **argv) {
   file_size = getFileSize(filename);
   if (file_size == 0) return 1;
 
-  computeReadSpeed2(filename, file_size);
-  /* computeWriteSpeed2(filename, file_size); */
+  /* computeReadSpeed2(filename, file_size); */
+  computeWriteSpeed2(filename, file_size);
   
   return 0;
 }
@@ -233,7 +233,7 @@ void computeReadSpeed2(const char *filename, u64 file_size) {
 void computeWriteSpeed2(const char *filename, u64 file_size) {
   int len, n_tests, test_iter;
   char *buf;
-  double test_time = 0, bytes_per_sec = 0;
+  double test_time = 0, bytes_per_sec = 0, start_time;
   int fd = open(filename, O_RDWR);
   assert(fd > 0);
 
@@ -251,7 +251,7 @@ void computeWriteSpeed2(const char *filename, u64 file_size) {
     for (n_tests = 1; n_tests < 1000000 && test_time < target_test_sec;
          n_tests *= 2) {
       
-      double start_time = getSeconds();
+      start_time = getSeconds();
       for (test_iter = 0; test_iter < n_tests; test_iter++) {
         u64 position = myrand(file_size - len);
         if (len != pwrite(fd, buf, len, position)) {
@@ -260,7 +260,7 @@ void computeWriteSpeed2(const char *filename, u64 file_size) {
           return;
         }
       }
-      syncfs(2);
+      fdatasync(fd);
       test_time = getSeconds() - start_time;
 
       bytes_per_sec = (u64)len * n_tests / test_time;
@@ -272,10 +272,9 @@ void computeWriteSpeed2(const char *filename, u64 file_size) {
     
     printf("%d, %f\n", len, bytes_per_sec);
   }
-  printf("before free\n");
   free(buf);
-  printf("after free\n");
+  start_time = getSeconds();
   close(fd);
-  printf("after close\n");
+  printf("close() took %.3f seconds\n", getSeconds() - start_time);
 }
   
