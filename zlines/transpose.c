@@ -673,7 +673,7 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
   if (f->fd == -1) goto fail;
 
   if (for_writing) {
-    length = f->n_rows * f->row_stride;
+    length = (u64)f->n_rows * f->row_stride;
     if (ftruncate(f->fd, length)) {
       fprintf(stderr, "Failed to set the length of %s to %" PRIu64 " bytes\n",
               filename, length);
