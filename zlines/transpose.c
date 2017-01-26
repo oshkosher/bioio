@@ -703,7 +703,10 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
 
     /* check for DOS (0x0d 0x0a) line endings, since having two bytes at the
        end of each line will change the row stride of the data */
-    pread(f->fd, buf, 1, first_line_len-1);
+    if (1 != pread(f->fd, buf, 1, first_line_len-1)) {
+      fprintf(stderr, "Input file error: read failed\n");
+      goto fail;
+    }
     f->newline_type = (buf[0] == '\r') ? NEWLINE_DOS : NEWLINE_UNIX;
 
     f->row_stride = first_line_len + 1;
@@ -727,7 +730,10 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
 
     for (row=10; row < f->n_rows; row *= 10) {
       /* printf("check row %d\n", (int)row); */
-      pread(f->fd, buf, 1, File2d_offset(f, row, f->row_stride-1));
+      if (1 != pread(f->fd, buf, 1, File2d_offset(f, row, f->row_stride-1))) {
+        fprintf(stderr, "Input file error: read failed\n");
+        goto fail;
+      }
       if (buf[0] != '\n') {
         fprintf(stderr, "Invalid input file: row %d length mismatch\n",
                 (int)row);
