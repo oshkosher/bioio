@@ -209,17 +209,30 @@ static void addLineInternal(ZlineFile *zf, u64 block_idx, u64 offset,
 
 static int flushBlock(ZlineFile *zf) {
   ZlineIndexBlock *block = zf->blocks + zf->block_count;
-  size_t write_len;
+  size_t write_len, compressed_len;
   u64 next_block_start;
 
   assert(block->offset > 0);
+
+  /* if the block is empty, do nothing */
+  if (zf->inbuf_size == 0) return 0;
+  
   block->decompressed_length = zf->inbuf_size;
 
   /* compress the block */
-  block->compressed_length = ZSTD_compress
+  compressed_len = ZSTD_compress
     (zf->outbuf, zf->outbuf_capacity, zf->inbuf, zf->inbuf_size,
      ZSTD_COMPRESSION_LEVEL);
+
+  /* check for errors */
+  if (ZSTD_isError(compressed_len)) {
+    fprintf(stderr, "Internal error compressing %d byte block into %d "
+            "byte buffer: %" PRIu64 "\n",
+            zf->inbuf_size, zf->outbuf_capacity, (u64) compressed_len);
+    return 1;
+  }
   
+  block->compressed_length = compressed_len;
   assert(block->compressed_length > 0);
   zf->outbuf_size = block->compressed_length;
   next_block_start = block->offset + block->compressed_length;
@@ -628,6 +641,7 @@ char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf) {
   ZlineIndexLine *line;
   u64 file_pos = 0;
   char *result = NULL;
+  u64 length_extracted = 0, block_idx, offset_in_block;
 
   assert(zf);
 
@@ -637,25 +651,47 @@ char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf) {
   
   if (line_idx >= zf->line_count) goto fail;
 
+  /* keep a pointer to the line record */
   line = zf->lines + line_idx;
 
-  /* read and decompress the block containing this line */
-  if (getBlock(zf, line->block_idx)) goto fail;
-  
-  if (!buf) {
-    buf = (char*) malloc(line->length + 1);
-    if (!buf) {
-      fprintf(stderr, "Out of memory getting line %" PRIu64 ", length %" PRIu64 "\n",
-              line_idx, line->length);
+  if (buf) {
+    result = buf;
+  } else {
+    result = (char*) malloc(line->length + 1);
+    if (!result) {
+      fprintf(stderr, "Out of memory getting line %" PRIu64
+              ", length %" PRIu64 "\n", line_idx, line->length);
       goto fail;
     }
   }
 
-  memcpy(buf, zf->outbuf + line->offset, line->length);
-  buf[line->length] = 0;
-  result = buf;
+  /* this is the block in which the line begins */
+  block_idx = line->block_idx;
+  offset_in_block = line->offset;
 
+  /* loop until the full line is extracted */
+  for (block_idx = line->block_idx; length_extracted < line->length;
+       block_idx++) {
+    u64 length_in_this_block;
+
+    /* read and decompress the block containing this line */
+    if (getBlock(zf, block_idx)) goto fail;
+
+    length_in_this_block = MIN(zf->outbuf_size - offset_in_block, line->length);
+    
+    memcpy(result + length_extracted, zf->outbuf + offset_in_block,
+           length_in_this_block);
+    length_extracted += length_in_this_block;
+    offset_in_block = 0;
+  }
+  result[line->length] = 0;
+
+  goto ok;
+  
  fail:
+  if (result != buf) free(result);
+
+ ok:
   if (zf->mode == ZLINE_MODE_CREATE)
     fseek(zf->fp, file_pos, SEEK_SET);
   
