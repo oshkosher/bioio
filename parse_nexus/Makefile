@@ -2,9 +2,8 @@ EXECS = read_nexus mmap_string_pool nexus_chars
 
 all: $(EXECS)
 
-# add librt for clock_gettime()
-LIBS=-lrt
-OPT=-O2
+LIBS=
+OPT=-O3
 
 # Blue Waters
 ifeq "$(shell hostname | head -c 8)" "h2ologin"
