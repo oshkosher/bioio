@@ -92,7 +92,7 @@ int read_block_width = 256;
 
 int cache_ob_size = 128;
 
-int default_temp_size = 4096;
+int default_temp_size = 1024 * 4;
 
 #define NEWLINE_UNIX 1
 #define NEWLINE_DOS 2
@@ -359,6 +359,12 @@ void transpose
                   height, width);
   } else {
 
+    transposeCacheOblivious
+      /* transposeBlocks */
+      (dest, dest_row, dest_col, src, src_row, src_col,
+       height, width);
+
+#if 0    
     u64 byte_count = (u64) height * width;
 
     if (byte_count < 100*1024*1024) {
@@ -376,6 +382,7 @@ void transpose
       transposeTwoStage(dest, dest_row, dest_col, src, src_row, src_col,
                         height, width);
     }
+#endif
   }
 }
 
@@ -673,7 +680,7 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
   if (f->fd == -1) goto fail;
 
   if (for_writing) {
-    length = f->n_rows * f->row_stride;
+    length = (u64)f->n_rows * f->row_stride;
     if (ftruncate(f->fd, length)) {
       fprintf(stderr, "Failed to set the length of %s to %" PRIu64 " bytes\n",
               filename, length);

@@ -171,7 +171,8 @@ void printHelp() {
 }
 
 
-/* Trim newlines from the end of the line, either Unix-style or DOS. */
+/* Trim newlines from the end of the line, either Unix-style or DOS.
+   Return the new length of the line. */
 size_t trimNewline(char *line, size_t len) {
   if (line[len-1] == '\n') {
     line[--len] = 0;
