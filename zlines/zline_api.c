@@ -677,8 +677,9 @@ char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf) {
     /* read and decompress the block containing this line */
     if (getBlock(zf, block_idx)) goto fail;
 
-    length_in_this_block = MIN(zf->outbuf_size - offset_in_block, line->length);
-    
+    length_in_this_block = MIN(zf->outbuf_size - offset_in_block, 
+                               line->length - length_extracted);
+
     memcpy(result + length_extracted, zf->outbuf + offset_in_block,
            length_in_this_block);
     length_extracted += length_in_this_block;
