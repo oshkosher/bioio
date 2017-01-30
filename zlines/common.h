@@ -25,4 +25,7 @@ const char *commafy(char *buf, uint64_t n);
 /* Return a relative time in seconds. */
 double getSeconds();
 
+/* Returns the amount of physical memory. */
+uint64_t getMemorySize();
+
 #endif /* __COMMON_H__ */

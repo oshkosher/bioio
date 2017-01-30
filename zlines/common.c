@@ -3,12 +3,18 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/time.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
 #include <errno.h>
 #include <inttypes.h>
 #include "common.h"
+/*
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+*/
 
 typedef uint64_t u64;
 
@@ -134,3 +140,36 @@ double getSeconds() {
   gettimeofday(&t, NULL);
   return t.tv_sec + t.tv_usec * 0.000001;
 }
+
+
+/* Returns the amount of physical memory. */
+uint64_t getMemorySize() {
+  long page_size, page_count;
+  u64 total_mem = 0;
+
+  page_size = sysconf(_SC_PAGE_SIZE);
+  page_count = sysconf(_SC_PHYS_PAGES);
+
+  if (page_size > 0 && page_count > 0) {
+    total_mem = (u64)page_size * page_count;
+  }
+
+#ifdef __APPLE__
+  if (total_mem == 0) {
+    int mib[2] = { CTL_HW, HW_MEMSIZE };
+    unsigned namelen = sizeof(mib) / sizeof(mib[0]);
+    u64 size;
+    size_t len = sizeof(size);
+
+    if (sysctl(mib, namelen, &size, &len, NULL, 0) < 0) {
+      perror("sysctl");
+    } else {
+      total_mem = size;
+    }
+  }
+#endif
+
+  return total_mem;
+}
+
+    
