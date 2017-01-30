@@ -197,6 +197,11 @@ int main(int argc, char **argv) {
   
   transposeFiles(&out_file, &in_file, tile_size);
 
+  File2d_close(&in_file);
+
+  /* the close time can be significant */
+  File2d_close(&out_file);
+
   elapsed = getSeconds() - start_time;
   mbps = byte_count / (elapsed * 1024 * 1024);
   printf("transpose %dx%d = %" PRIu64" bytes in %.3fs at %.1f MiB/s\n",
