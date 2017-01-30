@@ -11,3 +11,6 @@ bar*
 *.zlines
 zlines
 zlines_test
+create_2d_data
+disk_speed
+transpose

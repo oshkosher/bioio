@@ -1,4 +1,4 @@
-EXECS = zlines zlines_test transpose create_2d_data disk_speed
+EXECS = zlines zlines_test transpose create_2d_data
 
 all: $(EXECS)
 
