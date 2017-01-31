@@ -1,20 +1,23 @@
-#include <stdio.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <sys/time.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <time.h>
+#include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
-#include "common.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #endif
+
+#include "common.h"
 
 
 typedef uint64_t u64;
@@ -35,6 +38,13 @@ FILE *openFileOrStdin(const char *filename) {
 }
 
 
+int fileExists(const char *filename) {
+  struct stat statbuf;
+
+  return !stat(filename, &statbuf);
+}
+  
+
 u64 getFileSize(const char *filename) {
    struct stat stats;
    if (stat(filename, &stats)) {
@@ -45,6 +55,14 @@ u64 getFileSize(const char *filename) {
     return stats.st_size;
   }
 }
+
+/* Return nonzero if the given filename exists and is a directory. */
+int isDirectory(const char *filename) {
+  struct stat statbuf;
+
+  return !stat(filename, &statbuf) &&
+    S_ISDIR(statbuf.st_mode);
+}  
 
 
 /* If for_writing is nonzero, the file will be set to the length *length.
@@ -174,3 +192,98 @@ uint64_t getMemorySize() {
 }
 
     
+/* Parse a number with a case-insensitive magnitude suffix:
+     k : multiply by 1024
+     m : multiply by 1024*1024
+     g : multiply by 1024*1024*1024
+
+   For example, "32m" would parse as 33554432.
+   Return nonzero on error.
+*/
+int parseSize(const char *str, u64 *result) {
+  u64 multiplier = 1;
+  
+  /* missing argument check */
+  if (!str || !str[0]) return 1;
+
+  const char *last = str + strlen(str) - 1;
+  char suffix = tolower((int)*last);
+  if (suffix == 'k')
+    multiplier = 1024;
+  else if (suffix == 'm')
+    multiplier = 1024*1024;
+  else if (suffix == 'g')
+    multiplier = 1024*1024*1024;
+  else if (!isdigit((int)suffix))
+    return 1;
+
+  /* if (multiplier > 1) */
+  if (!sscanf(str, "%" SCNu64, result))
+    return 1;
+
+  *result *= multiplier;
+  return 0;
+}
+
+
+int Array2d_init(Array2d *array, int n_rows, int n_cols, int row_stride) {
+  u64 size = (u64)n_rows * row_stride;
+  array->data = (char*) malloc(size);
+  if (!array->data) {
+    fprintf(stderr, "Out of memory. Failed to allocate %" PRIu64 " bytes\n",
+            size);
+    return -1;
+  }
+
+  array->n_rows = n_rows;
+  array->n_cols = n_cols;
+  array->row_stride = row_stride;
+  return 0;
+}
+
+
+static int cache_ob_size = 128;
+
+void transpose(Array2d *dest, int dest_row, int dest_col,
+               Array2d *src, int src_row, int src_col,
+               int height, int width) {
+
+  if (height > cache_ob_size || width > cache_ob_size) {
+    int half;
+    if (height > width) {
+      half = height / 2;
+      transpose(dest, dest_row, dest_col,
+                src, src_row, src_col,
+                half, width);
+      transpose(dest, dest_row, dest_col+half,
+                src, src_row+half, src_col,
+                height-half, width);
+    } else {
+      half = width / 2;
+      transpose(dest, dest_row, dest_col,
+                src, src_row, src_col,
+                height, half);
+      transpose(dest, dest_row+half, dest_col,
+                src, src_row, src_col+half,
+                height, width-half);
+    }
+    return;
+  }      
+
+  transposeTile(dest, dest_row, dest_col,
+                src, src_row, src_col, height, width);
+
+}
+
+
+void transposeTile(Array2d *dest, int dest_row, int dest_col,
+                   Array2d *src, int src_row, int src_col,
+                   int height, int width) {
+  int x, y;
+  for (x = 0; x < width; x++) {
+    for (y = 0; y < height; y++) {
+      *Array2d_ptr(dest, dest_row + x, dest_col + y) =
+        *Array2d_ptr(src, src_row + y, src_col + x);
+    }
+  }
+}  

@@ -49,14 +49,6 @@ typedef uint64_t u64;
 #define DEFAULT_TILE_SIZE (4 * 1024)
 #define VERBOSE 0
 
-typedef struct {
-  char *data;
-  int n_rows, n_cols, row_stride;
-} Array2d;
-
-/* Get a pointer to a character in an Array2d. 'a' should be an Array2d,
-   not a pointer to one. */
-#define Array2d_ptr(a, row, col) ((a).data + (u64)(row) * (a).row_stride + (col))
 
 typedef struct {
   int fd;
@@ -104,9 +96,6 @@ int tile_size = DEFAULT_TILE_SIZE;
 
 int newline_type;
 
-#define MIN(a,b) ((a)<(b)?(a):(b))
-#define MAX(a,b) ((a)>(b)?(a):(b))
-
 void printHelp();
 #define newlineLength(newline_type) (newline_type)
 #define newlineName(newline_type) ((newline_type)==(NEWLINE_DOS)?"DOS":"unix")
@@ -123,18 +112,6 @@ void transposeFiles(File2d *out, File2d *in, int tile_size);
 
 /* transpose the data using a block algorithm. */
 void transposeBlocks
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width);
-
-/* transpose the data using a cache-oblivious algorithm. */
-void transposeCacheOblivious
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width);
-
-/* Transpose one tile using a simple algorithm. */
-void transposeTile
 (Array2d *dest, int dest_row, int dest_col,
  Array2d *src, int src_row, int src_col,
  int height, int width);
@@ -265,20 +242,6 @@ int createTempBuffer(Array2d *temp, int tile_size) {
 }
 
 
-/* Transpose a 2d array. This will call one of the other transpose routines.
- */
-void transpose
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width) {
-
-  transposeCacheOblivious
-    /* transposeBlocks */
-    (dest, dest_row, dest_col, src, src_row, src_col,
-     height, width);
-}
-
-
 void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
   Array2d in, out;
   int row, x, y, block_width, block_height;
@@ -325,7 +288,7 @@ void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
       /* if this is the last block of the row, write the newlines as well. */
       if (y + block_height == out_file->n_cols) {
         for (row = 0; row < block_width; row++)
-          writeNewline(Array2d_ptr(out, row, block_height),
+          writeNewline(Array2d_ptr(&out, row, block_height),
                        out_file->newline_type);
       
         block_height += newlineLength(out_file->newline_type);
@@ -356,30 +319,6 @@ void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
 }
 
 
-void transposeTile(Array2d *dest, int dest_row, int dest_col,
-                   Array2d *src, int src_row, int src_col,
-                   int height, int width) {
-
-  int x, y;
-
-  /*
-  printf("transpose (%d,%d) - (%d,%d)\n", src_row, src_col,
-         src_row + height, src_col + width);
-  */
-  
-  for (x = 0; x < width; x++) {
-    for (y = 0; y < height; y++) {
-
-      *Array2d_ptr(*dest, dest_row + x, dest_col + y) =
-        *Array2d_ptr(*src, src_row + y, src_col + x);
-
-    }
-  }
-
-  bytes_done += (u64)width * height;
-}  
-
-
 /* height and width are in terms of the src array */
 void transposeBlocks(Array2d *dest, int dest_row, int dest_col,
                      Array2d *src, int src_row, int src_col,
@@ -402,38 +341,6 @@ void transposeBlocks(Array2d *dest, int dest_row, int dest_col,
 
 }
 
-
-void transposeCacheOblivious(Array2d *dest, int dest_row, int dest_col,
-                             Array2d *src, int src_row, int src_col,
-                             int height, int width) {
-
-  if (height > cache_ob_size || width > cache_ob_size) {
-    int half;
-    if (height > width) {
-      half = height / 2;
-      transposeCacheOblivious(dest, dest_row, dest_col,
-                              src, src_row, src_col,
-                              half, width);
-      transposeCacheOblivious(dest, dest_row, dest_col+half,
-                              src, src_row+half, src_col,
-                              height-half, width);
-    } else {
-      half = width / 2;
-      transposeCacheOblivious(dest, dest_row, dest_col,
-                              src, src_row, src_col,
-                              height, half);
-      transposeCacheOblivious(dest, dest_row+half, dest_col,
-                              src, src_row, src_col+half,
-                              height, width-half);
-    }
-    return;
-  }      
-
-  transposeTile(dest, dest_row, dest_col,
-                src, src_row, src_col, height, width);
-
-}
-
                 
 /* simple copy without transposing */
 void copy2d
@@ -444,12 +351,12 @@ void copy2d
   int row;
 
   for (row = 0; row < height; row++) {
-    memcpy(Array2d_ptr(*dest, dest_row + row, dest_col),
-           Array2d_ptr(*src, src_row + row, src_col),
+    memcpy(Array2d_ptr(dest, dest_row + row, dest_col),
+           Array2d_ptr(src, src_row + row, src_col),
            width);
 
     if (dest == &out && dest_col + width == dest->n_cols)
-      writeNewline(Array2d_ptr(*dest, dest_row + row, dest->n_cols),
+      writeNewline(Array2d_ptr(dest, dest_row + row, dest->n_cols),
                    newline_type);
   }
 }
@@ -464,7 +371,7 @@ void copy2dToFile
 
   for (row = 0; row < height; row++) {
     file_offset = File2d_offset(dest, dest_row + row, dest_col);
-    if (width != pwrite(dest->fd, Array2d_ptr(*src, src_row + row, src_col),
+    if (width != pwrite(dest->fd, Array2d_ptr(src, src_row + row, src_col),
                         width, file_offset)) {
       fprintf(stderr, "Error writing %d bytes to %s at offset %" PRIu64 "\n",
               width, dest->filename, file_offset);
@@ -482,7 +389,7 @@ void copy2dFromFile
 
   for (row = 0; row < height; row++) {
     file_offset = File2d_offset(src, src_row + row, src_col);
-    if (width != pread(src->fd, Array2d_ptr(*dest, dest_row + row, dest_col),
+    if (width != pread(src->fd, Array2d_ptr(dest, dest_row + row, dest_col),
                         width, file_offset)) {
       fprintf(stderr, "Error read %d bytes from %s at offset %" PRIu64 "\n",
               width, src->filename, file_offset);

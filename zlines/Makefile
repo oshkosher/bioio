@@ -1,4 +1,4 @@
-EXECS = zlines zlines_test transpose create_2d_data
+EXECS = create_2d_data zlines zlines_test transpose transpose2
 
 all: $(EXECS)
 
@@ -7,8 +7,8 @@ ZSTD_LIB=-Lzstd/lib/ -lzstd
 ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
-LIBS=
-CFLAGS=-O3 -std=c89 -Wall $(ZSTD_INC)
+LIBS=-lm
+CFLAGS=-g -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
 
@@ -25,6 +25,9 @@ zlines_test: zlines_test.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
 
 transpose: transpose.c common.o
+	$(CC) $^ $(LIBS) -o $@
+
+transpose2: transpose2.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 create_2d_data: create_2d_data.c
