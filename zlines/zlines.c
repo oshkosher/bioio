@@ -15,7 +15,8 @@
 #define DEFAULT_BLOCK_SIZE (4 * 1024 * 1024)
 #define CREATE_FILE_UPDATE_FREQUENCY_BYTES (50*1024*1024)
 
-enum ProgramMode {PROG_CREATE, PROG_DETAILS, PROG_VERIFY, PROG_GET};
+enum ProgramMode {PROG_CREATE, PROG_DETAILS, PROG_VERIFY, PROG_GET,
+                  PROG_PRINT};
 
 typedef uint64_t u64;
 
@@ -40,6 +41,7 @@ int createFile(Options *opt);
 int fileDetails(Options *opt);
 int verifyFile(Options *opt);
 int getLines(Options *opt);
+int printLines(Options *opt);
 
 
 int main(int argc, char **argv) {
@@ -59,6 +61,9 @@ int main(int argc, char **argv) {
 
   case PROG_GET:
     return getLines(&opt);
+
+  case PROG_PRINT:
+    return printLines(&opt);
   }  
 
   return 0;
@@ -84,6 +89,8 @@ int parseArgs(int argc, char **argv, Options *opt) {
     opt->mode = PROG_VERIFY;
   } else if (!strcmp(argv[argno], "get")) {
     opt->mode = PROG_GET;
+  } else if (!strcmp(argv[argno], "print")) {
+    opt->mode = PROG_PRINT;
   } else {
     fprintf(stderr, "Invalid command: \"%s\"\n", argv[argno]);
     return 1;
@@ -127,6 +134,11 @@ int parseArgs(int argc, char **argv, Options *opt) {
     opt->output_filename = argv[argno++];
     break;
 
+  case PROG_PRINT:
+    if (argno+1 != argc) printHelp();
+    opt->input_filename = argv[argno++];
+    break;
+
   case PROG_GET:
     if (argno+1 >= argc) printHelp();
     opt->input_filename = argv[argno++];
@@ -157,6 +169,9 @@ void printHelp() {
           "    if input text file is \"-\", use stdin\n"
           "    options:\n"
           "      -b <block size> : size (in bytes) of compression blocks\n"
+          "\n"
+          "  zlines print <zlines file>\n"
+          "    prints every line in the file\n"
           "\n"
           "  zlines details <zlines file>\n"
           "    prints internal details about the data encoded in the file\n"
@@ -422,6 +437,43 @@ int getLines(Options *opt) {
   free(opt->line_numbers);
   
   ZlineFile_close(zf);
+  
+  return 0;
+}
+
+
+int printLines(Options *opt) {
+  ZlineFile *zf;
+  u64 i, count, line_len;
+  char *line;
+
+  zf = ZlineFile_read(opt->input_filename);
+  if (!zf) {
+    fprintf(stderr, "Failed to open \"%s\" for reading.\n",
+            opt->input_filename);
+    return 1;
+  }
+
+  /* number of lines in the file */
+  count = ZlineFile_line_count(zf);
+
+  /* allocate a buffer big enough to hold any line */
+  line = (char*) malloc(ZlineFile_max_line_length(zf) + 2);
+  if (!line) {
+    fprintf(stderr, "Out of memory\n");
+    return 1;
+  }
+
+  /* extract each line and print it */
+  for (i = 0; i < count; i++) {
+    line_len = ZlineFile_line_length(zf, i);
+    ZlineFile_get_line(zf, i, line);
+    line[line_len] = '\n';
+    fwrite(line, line_len+1, 1, stdout);
+  }
+  
+  ZlineFile_close(zf);
+  free(line);
   
   return 0;
 }
