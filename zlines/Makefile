@@ -46,6 +46,14 @@ test_transpose:
 	shasum foo foo2
 	rm foo bar foo2
 
+test_transpose2:
+	./create_2d_data 5678 1234 > foo
+	./transpose2 -m 20m < foo > bar.1
+	./transpose2 -m 4m < foo > bar.2
+	./transpose2 -m 500k < foo > bar.3
+	shasum bar.1 bar.2 bar.3
+#	rm foo bar.1 bar.2 bar.3
+
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:
 	git clone https://github.com/facebook/zstd.git
