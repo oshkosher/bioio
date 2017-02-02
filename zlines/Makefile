@@ -1,5 +1,5 @@
 EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
-  check_transpose
+  check_transpose transpose_mmap
 
 all: $(EXECS)
 
@@ -9,8 +9,8 @@ ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
-#OPT=-g
-OPT=-O3
+OPT=-g
+#OPT=-O3
 CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
@@ -31,6 +31,9 @@ transpose: transpose.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 transpose_v0: transpose_v0.c common.o
+	$(CC) $^ $(LIBS) -o $@
+
+transpose_mmap: transpose_mmap.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 check_transpose: check_transpose.c common.o
