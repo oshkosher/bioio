@@ -46,8 +46,6 @@ double target_test_sec = 3.0;
 void printHelp();
 void computeReadSpeed(const char *filename, u64 file_size);
 void computeWriteSpeed(const char *filename, u64 file_size);
-void computeReadSpeed2(const char *filename, u64 file_size);
-void computeWriteSpeed2(const char *filename, u64 file_size);
 u64 myrand(u64 max);
 
 int main(int argc, char **argv) {
@@ -61,8 +59,8 @@ int main(int argc, char **argv) {
   file_size = getFileSize(filename);
   if (file_size == 0) return 1;
 
-  /* computeReadSpeed2(filename, file_size); */
-  computeWriteSpeed2(filename, file_size);
+  computeReadSpeed(filename, file_size);
+  computeWriteSpeed(filename, file_size);
   
   return 0;
 }
@@ -86,115 +84,16 @@ u64 myrand(u64 max) {
 
 
 void computeReadSpeed(const char *filename, u64 file_size) {
-  int len, n_tests, test_iter, read_len;
-  char *buf;
-  double test_time = 0, bytes_per_sec = 0;
-  FILE *f = fopen(filename, "r");
-  assert(f);
-
-  buf = (char*) malloc(max_test_len);
-  assert(buf);
-
-  printf("read\n");
-
-  /* run tests for varying read lengths */
-  for (len = min_test_len; len <= max_test_len; len *= 2) {
-
-    /* do enough iterations that it takes at least (target_test_sec) seconds
-       to do them all */
-    test_time = 0;
-    for (n_tests = 1; n_tests < 1000000 && test_time < target_test_sec;
-         n_tests *= 2) {
-      
-      double start_time = getSeconds();
-      for (test_iter = 0; test_iter < n_tests; test_iter++) {
-        u64 position = myrand(file_size - len);
-        fseek(f, position, SEEK_SET);
-        read_len = fread(buf, len, 1, f);
-        if (read_len != 1) {
-          fprintf(stderr, "fread of %d bytes at %" PRIu64 " failed\n",
-                  len, position);
-          return;
-        }
-      }
-      test_time = getSeconds() - start_time;
-
-      bytes_per_sec = (u64)len * n_tests / test_time;
-      /*
-      printf("len %d, %d iters, %.3f sec, %.3f MiB/s\n",
-             len, n_tests, test_time, bytes_per_sec / (1024 * 1024));
-      */
-    }
-    
-    printf("%d, %f\n", len, bytes_per_sec);
-  }
-  free(buf);
-  fclose(f);
-}
-
-
-void computeWriteSpeed(const char *filename, u64 file_size) {
-  int len, n_tests, test_iter, write_len;
-  char *buf;
-  double test_time = 0, bytes_per_sec = 0;
-  FILE *f = fopen(filename, "w");
-  assert(f);
-
-  buf = (char*) calloc(max_test_len, 1);
-  assert(buf);
-
-  printf("write\n");
-
-  /* run tests for varying read lengths */
-  for (len = min_test_len; len <= max_test_len; len *= 2) {
-
-    /* do enough iterations that it takes at least (target_test_sec) seconds
-       to do them all */
-    test_time = 0;
-    for (n_tests = 1; n_tests < 1000000 && test_time < target_test_sec;
-         n_tests *= 2) {
-      
-      double start_time = getSeconds();
-      for (test_iter = 0; test_iter < n_tests; test_iter++) {
-        u64 position = myrand(file_size - len);
-        fseek(f, position, SEEK_SET);
-        write_len = fwrite(buf, len, 1, f);
-        if (write_len != 1) {
-          fprintf(stderr, "fwrite of %d bytes at %" PRIu64 " failed\n",
-                  len, position);
-          return;
-        }
-      }
-      test_time = getSeconds() - start_time;
-
-      bytes_per_sec = (u64)len * n_tests / test_time;
-      /*
-      printf("len %d, %d iters, %.3f sec, %.3f MiB/s\n",
-             len, n_tests, test_time, bytes_per_sec / (1024 * 1024));
-      */
-    }
-    
-    printf("%d, %f\n", len, bytes_per_sec);
-  }
-  printf("before free\n");
-  free(buf);
-  printf("after free\n");
-  fclose(f);
-  printf("after fclose\n");
-}
-
-
-void computeReadSpeed2(const char *filename, u64 file_size) {
   int len, n_tests, test_iter;
   char *buf;
-  double test_time = 0, bytes_per_sec = 0;
+  double test_time = 0, bytes_per_sec = 0, iops = 0;
   int fd = open(filename, O_RDONLY);
   assert(fd > 0);
 
   buf = (char*) malloc(max_test_len);
   assert(buf);
 
-  printf("read\n");
+  printf("read\nlength, bytes per second, IOPS\n");
 
   /* run tests for varying read lengths */
   for (len = min_test_len; len <= max_test_len; len *= 2) {
@@ -204,7 +103,7 @@ void computeReadSpeed2(const char *filename, u64 file_size) {
     test_time = 0;
     for (n_tests = 1; n_tests < 1000000 && test_time < target_test_sec;
          n_tests *= 2) {
-      
+
       double start_time = getSeconds();
       for (test_iter = 0; test_iter < n_tests; test_iter++) {
         u64 position = myrand(file_size - len);
@@ -217,30 +116,27 @@ void computeReadSpeed2(const char *filename, u64 file_size) {
       test_time = getSeconds() - start_time;
 
       bytes_per_sec = (u64)len * n_tests / test_time;
-      /*
-      printf("len %d, %d iters, %.3f sec, %.3f MiB/s\n",
-             len, n_tests, test_time, bytes_per_sec / (1024 * 1024));
-      */
+      iops = n_tests / test_time;
     }
     
-    printf("%d, %f\n", len, bytes_per_sec);
+    printf("%d, %f, %f\n", len, bytes_per_sec, iops);
   }
   free(buf);
   close(fd);
 }
 
 
-void computeWriteSpeed2(const char *filename, u64 file_size) {
+void computeWriteSpeed(const char *filename, u64 file_size) {
   int len, n_tests, test_iter;
   char *buf;
-  double test_time = 0, bytes_per_sec = 0, start_time;
+  double test_time = 0, bytes_per_sec = 0, start_time, iops = 0;
   int fd = open(filename, O_RDWR);
   assert(fd > 0);
 
   buf = (char*) calloc(max_test_len, 1);
   assert(buf);
 
-  printf("write\n");
+  printf("write\nlength, bytes per second, IOPS\n");
 
   /* run tests for varying read lengths */
   for (len = min_test_len; len <= max_test_len; len *= 2) {
@@ -264,13 +160,10 @@ void computeWriteSpeed2(const char *filename, u64 file_size) {
       test_time = getSeconds() - start_time;
 
       bytes_per_sec = (u64)len * n_tests / test_time;
-      /*
-      printf("len %d, %d iters, %.3f sec, %.3f MiB/s\n",
-             len, n_tests, test_time, bytes_per_sec / (1024 * 1024));
-      */
+      iops = n_tests / test_time;
     }
     
-    printf("%d, %f\n", len, bytes_per_sec);
+    printf("%d, %f, %f\n", len, bytes_per_sec, iops);
   }
   free(buf);
   start_time = getSeconds();
