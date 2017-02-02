@@ -225,6 +225,11 @@ int parseArgs(int argc, char **argv) {
       
     argno++;
   }
+
+  if (argno != argc) {
+    fprintf(stderr, "Extra unrecognized arguments.\n");
+    printHelp();
+  }
   
   return 0;
 }
@@ -457,7 +462,7 @@ u64 tempFileOffsetTx(int row, int col) {
   col_in_block = col % write_buffer.n_cols;
   
   offset = block_start
-    + (row_in_block * read_buffer.n_cols)
+    + (row_in_block * write_buffer.n_cols)
     + col_in_block;
 
   return offset;
@@ -653,6 +658,7 @@ int flushWriteBufferToTemp(int first_row) {
   transpose(&write_buffer, 0, 0, &read_buffer, 0, 0,
             read_buffer_rows_filled, input_width);
 
+  assert(first_row % read_buffer.n_rows == 0);
   if (tempFileWrite(first_row, 0, write_buffer.data, getBlockBytes()))
     return -1;
 
@@ -755,8 +761,8 @@ int writeFile(FILE *output_file) {
     for (row=0; row < input_width; row++) {
 
       /* read each chunk of the line */
-      for (col=0; col < input_height; col += read_buffer.n_rows) {
-        width = MIN(read_buffer.n_cols, input_height - col);
+      for (col=0; col < input_height; col += write_buffer.n_cols) {
+        width = MIN(write_buffer.n_cols, input_height - col);
 
         if (tempFileReadTx(row, col, output_row + col, width)) goto fail;
       }

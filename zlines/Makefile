@@ -1,4 +1,5 @@
-EXECS = create_2d_data zlines zlines_test transpose transpose2
+EXECS = create_2d_data zlines zlines_test transpose transpose2 \
+  check_transpose
 
 all: $(EXECS)
 
@@ -8,7 +9,9 @@ ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
-CFLAGS=-g -std=c89 -Wall $(ZSTD_INC)
+#OPT=-g
+OPT=-O3
+CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
 
@@ -30,6 +33,9 @@ transpose: transpose.c common.o
 transpose2: transpose2.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
+check_transpose: check_transpose.c common.o
+	$(CC) $^ $(LIBS) -o $@
+
 create_2d_data: create_2d_data.c
 	$(CC) $^ $(LIBS) -o $@
 
@@ -37,7 +43,7 @@ disk_speed: disk_speed.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 
-test: create_2d_data transpose test_transpose
+test: create_2d_data transpose transpose2 test_transpose2
 
 test_transpose:
 	./create_2d_data 1234 5678 > foo
@@ -49,10 +55,12 @@ test_transpose:
 test_transpose2:
 	./create_2d_data 5678 1234 > foo
 	./transpose2 -m 20m < foo > bar.1
+	./check_transpose foo bar.1
 	./transpose2 -m 4m < foo > bar.2
+	./check_transpose foo bar.2
 	./transpose2 -m 500k < foo > bar.3
-	shasum bar.1 bar.2 bar.3
-#	rm foo bar.1 bar.2 bar.3
+	./check_transpose foo bar.3
+	rm foo bar.1 bar.2 bar.3
 
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:

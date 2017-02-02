@@ -32,6 +32,7 @@ typedef struct {
   int line_number_count;
 } Options;
 
+int quiet = 0;
 
 int parseArgs(int argc, char **argv, Options *opt);
 void printHelp();
@@ -75,6 +76,7 @@ int parseArgs(int argc, char **argv, Options *opt) {
 
   opt->mode = PROG_CREATE;
   opt->block_size = DEFAULT_BLOCK_SIZE;
+  quiet = 0;
   opt->input_filename = opt->output_filename = NULL;
   opt->line_numbers = 0;
   opt->line_number_count = 0;
@@ -111,6 +113,15 @@ int parseArgs(int argc, char **argv, Options *opt) {
         fprintf(stderr, "Invalid block size: \"%s\"\n", argv[argno]);
         return 1;
       }
+    }
+      
+    else if (!strcmp(argv[argno], "-q")) {
+      quiet = 1;
+    }
+      
+    else {
+      fprintf(stderr, "Unrecognized option: \"%s\"\n", argv[argno]);
+      return 1;
     }
 
     argno++;
@@ -169,6 +180,7 @@ void printHelp() {
           "    if input text file is \"-\", use stdin\n"
           "    options:\n"
           "      -b <block size> : size (in bytes) of compression blocks\n"
+          "      -q : don't print status output\n"
           "\n"
           "  zlines print <zlines file>\n"
           "    prints every line in the file\n"
@@ -203,6 +215,7 @@ size_t trimNewline(char *line, size_t len) {
    so it overwrites the current output line. */
 void statusOutput(u64 line_count, u64 byte_count, u64 file_size) {
   char linebuf[50], bytebuf[50];
+  if (quiet) return;
   printf("\r%s lines, %s bytes", commafy(linebuf, line_count),
          commafy(bytebuf, byte_count));
   if (file_size)
@@ -285,13 +298,15 @@ int createFile(Options *opt) {
   for (idx = 0; idx < zf->block_count; idx++)
     total_zblock_size += zf->blocks[idx].compressed_length;
 
-  printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
-         "compressed to %" PRIu64 " blocks, %s"
-         " bytes with %s bytes overhead\n", 
-         min_line_len, max_line_len,
-         zf->block_count, commafy(buf1, total_zblock_size),
-         commafy(buf2, output_file_size - total_zblock_size));
-    
+  if (!quiet) {
+    printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
+           "compressed to %" PRIu64 " blocks, %s"
+           " bytes with %s bytes overhead\n", 
+           min_line_len, max_line_len,
+           zf->block_count, commafy(buf1, total_zblock_size),
+           commafy(buf2, output_file_size - total_zblock_size));
+  }
+  
   ZlineFile_close(zf);
 
   return err;

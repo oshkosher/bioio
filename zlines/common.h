@@ -54,9 +54,24 @@ typedef struct {
 } Array2d;
 
 /* Get a pointer to a character in an Array2d. 'a' should be a Array2d*  */
-#define Array2d_ptr(a, row, col) ((a)->data + (u64)(row) * (a)->row_stride + (col))
+#define Array2d_ptr(a, row, col) ((a)->data + (uint64_t)(row) * (a)->row_stride + (col))
 
 int Array2d_init(Array2d *array, int n_rows, int n_cols, int row_stride);
+
+typedef struct {
+  int fd;
+  const char *filename;
+  int n_rows, n_cols, row_stride, newline_type;
+} File2d;
+
+/* If for_writing is nonzero, n_rows, n_cols, row_stride, and newline_type
+   will need to be set before calling this. If it's zero, then they will
+   be filled in. */
+int File2d_open(File2d *f, const char *filename, int for_writing);
+void File2d_close(File2d *f);
+
+/* Get the offset of a location in a File2d */
+uint64_t File2d_offset(File2d *f, int row, int col);
 
 
 /* Transpose a 2d array using a cache-oblivious algorithm. */
@@ -70,6 +85,13 @@ void transposeTile
 (Array2d *dest, int dest_row, int dest_col,
  Array2d *src, int src_row, int src_col,
  int height, int width);
+
+#define NEWLINE_UNIX 1
+#define NEWLINE_DOS 2
+
+#define newlineLength(newline_type) (newline_type)
+#define newlineName(newline_type) ((newline_type)==(NEWLINE_DOS)?"DOS":"unix")
+void writeNewline(char *dest, int newline_type);
 
 
 #endif /* __COMMON_H__ */

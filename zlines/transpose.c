@@ -45,28 +45,10 @@ transpose 1999999x21946 = 43891978054 bytes in 1084.340s at 38.6 MiB/s
 
 typedef uint64_t u64;
 
-#define STATUS_REPORT_BYTE_INCREMENT (100*1000*1000)
+#define STATUS_REPORT_BYTE_INCREMENT (10*1000*1000)
 #define DEFAULT_TILE_SIZE (4 * 1024)
 #define VERBOSE 0
 
-
-typedef struct {
-  int fd;
-  const char *filename;
-  int n_rows, n_cols, row_stride, newline_type;
-} File2d;
-
-/* If for_writing is nonzero, n_rows, n_cols, row_stride, and newline_type
-   will need to be set before calling this. If it's zero, then they will
-   be filled in. */
-int File2d_open(File2d *f, const char *filename, int for_writing);
-void File2d_close(File2d *f);
-
-/* Find the first instance of the given byte in the file */
-int File2d_find_byte(File2d *f, char c);
-
-/* Get the offset of a location in a File2d */
-u64 File2d_offset(File2d *f, int row, int col);
 
 File2d in_file, out_file;
 Array2d in, out;
@@ -91,15 +73,9 @@ int cache_ob_size = 128;
 
 int tile_size = DEFAULT_TILE_SIZE;
 
-#define NEWLINE_UNIX 1
-#define NEWLINE_DOS 2
-
 int newline_type;
 
 void printHelp();
-#define newlineLength(newline_type) (newline_type)
-#define newlineName(newline_type) ((newline_type)==(NEWLINE_DOS)?"DOS":"unix")
-void writeNewline(char *dest, int newline_type);
 
 /* Transpose a 2d array. This will call one of the other transpose routines,
    depending on the size of the array. */
@@ -196,22 +172,6 @@ void printHelp() {
 }
 
 
-/* Get the offset of a location in a File2d */
-u64 File2d_offset(File2d *f, int row, int col) {
-  return (u64)row * f->row_stride + col;
-}
-
-
-void writeNewline(char *dest, int newline_type) {
-  if (newline_type == NEWLINE_DOS) {
-    dest[0] = '\r';
-    dest[1] = '\n';
-  } else {
-    dest[0] = '\n';
-  }
-}
-
-
 int createTempBuffer(Array2d *temp, int tile_size) {
   u64 temp_size = (u64)tile_size * tile_size;
 
@@ -284,6 +244,7 @@ void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
 #if VERBOSE > 1
       printf("  transpose %.3fs\n", elapsed);
 #endif
+      bytes_done += (u64)block_width * block_height;
 
       /* if this is the last block of the row, write the newlines as well. */
       if (y + block_height == out_file->n_cols) {
@@ -397,137 +358,6 @@ void copy2dFromFile
   }
 }
 
-int File2d_open(File2d *f, const char *filename, int for_writing) {
-  int flags;
-  mode_t mode = 0;
-  u64 length, first_line_len, row;
-  char buf[10];
-
-  if (for_writing) {
-    flags = O_RDWR | O_CREAT | O_TRUNC;
-    mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-    assert(f->n_cols && f->n_rows && f->newline_type);
-    f->row_stride = f->n_cols + newlineLength(f->newline_type);
-  } else {
-    flags = O_RDONLY;
-    length = getFileSize(filename);
-    if (length == 0) goto fail;
-  }
-  
-  f->filename = filename;
-  f->fd = open(filename, flags, mode);
-  if (f->fd == -1) goto fail;
-
-  if (for_writing) {
-    length = (u64)f->n_rows * f->row_stride;
-    if (ftruncate(f->fd, length)) {
-      fprintf(stderr, "Failed to set the length of %s to %" PRIu64 " bytes\n",
-              filename, length);
-      goto fail;
-    }
-  } else {
-    assert(length > 0);
-
-    /* guesstimate out the file dimensions */
-    first_line_len = File2d_find_byte(f, '\n');
-    if (first_line_len >= INT_MAX) {
-      fprintf(stderr, "First line of %s is %" PRIu64 " bytes, which is longer "
-              "than this tool supports.\n", filename, first_line_len);
-      goto fail;
-    }
-
-    if (first_line_len == length || first_line_len == -1) {
-      fprintf(stderr, "Invalid input file: no line endings found.\n");
-      goto fail;
-    }
-      
-
-    if (first_line_len == 0) {
-      fprintf(stderr, "Invalid input file: first line is empty\n");
-      goto fail;
-    }
-
-    /* check for DOS (0x0d 0x0a) line endings, since having two bytes at the
-       end of each line will change the row stride of the data */
-    if (1 != pread(f->fd, buf, 1, first_line_len-1)) {
-      fprintf(stderr, "Input file error: read failed\n");
-      goto fail;
-    }
-    f->newline_type = (buf[0] == '\r') ? NEWLINE_DOS : NEWLINE_UNIX;
-
-    f->row_stride = first_line_len + 1;
-    f->n_cols = f->row_stride - newlineLength(f->newline_type);
-
-    /* For this tool to work correctly, every line of the file must have
-       the same length. Don't check every line, but check that the file
-       size is an integer multiple of the line length. */
-    
-    f->n_rows = length / f->row_stride;
-    if (length != f->n_rows * (u64)f->row_stride) {
-      fprintf(stderr, "Invalid input file: uneven line lengths "
-              "(rows appear to be %d bytes each, but that doesn't evenly "
-              "divide the file length, %" PRIu64 "\n",
-              f->row_stride, length);
-      goto fail;
-    }
-
-    /* Check for the presence of a newline character in the right place
-       in a few more rows. */
-
-    for (row=10; row < f->n_rows; row *= 10) {
-      /* printf("check row %d\n", (int)row); */
-      if (1 != pread(f->fd, buf, 1, File2d_offset(f, row, f->row_stride-1))) {
-        fprintf(stderr, "Input file error: read failed\n");
-        goto fail;
-      }
-      if (buf[0] != '\n') {
-        fprintf(stderr, "Invalid input file: row %d length mismatch\n",
-                (int)row);
-        return -1;
-      }
-    }
-    
-  }
-
-  return 0;
-
- fail:
-  if (f->fd >= 0) close(f->fd);
-  f->fd = -1;
-  return -1;
-}
-    
-
-/* Find the first instance of the given byte in the file */
-int File2d_find_byte(File2d *f, char c) {
-  char buf[4096], *found_pos;
-  u64 pos, original_pos =  lseek(f->fd, 0, SEEK_CUR);
-  int read_len;
-
-  pos = lseek(f->fd, 0, SEEK_SET);
-  assert(pos == 0);
-
-  do {
-    read_len = read(f->fd, buf, sizeof buf);
-    if (read_len < 0) return -1;
-    found_pos = memchr(buf, c, read_len);
-    if (found_pos) {
-      lseek(f->fd, original_pos, SEEK_SET);
-      return pos + (found_pos - buf);
-    }
-    pos += read_len;
-  } while (read_len == sizeof buf);
-
-  lseek(f->fd, original_pos, SEEK_SET);
-  return -1;
-}
-  
-  
-void File2d_close(File2d *f) {
-  close(f->fd);
-  f->fd = -1;
-}
-
 
 /* Call this to print a status update occasionally.
    It reads these global variables:
@@ -552,9 +382,12 @@ void statusReport(int final) {
 
   pct_done = 100.0 * bytes_done / byte_count;
   
-  printf("\r%.2f%% of %s bytes done, %d of %d tiles, r=%.3f tx=%.3f w=%.3f",
-         pct_done, commafy(buf1, byte_count), tiles_done, tile_count,
-         time_reading, time_transposing, time_writing);
+  printf("\r%.2f%% of %s bytes done, %d of %d tiles"
+         /* ", r=%.3f tx=%.3f w=%.3f"*/
+         , pct_done, commafy(buf1, byte_count), tiles_done, tile_count
+         /*, time_reading, time_transposing, time_writing */
+         );
+         
   if (final) putchar('\n');
   fflush(stdout);
   next_report += STATUS_REPORT_BYTE_INCREMENT;
