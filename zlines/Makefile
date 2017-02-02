@@ -9,8 +9,8 @@ ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
-OPT=-g
-#OPT=-O3
+#OPT=-g
+OPT=-O3
 CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
@@ -50,13 +50,13 @@ test: create_2d_data transpose check_transpose test_transpose
 
 test_transpose:
 	./create_2d_data 5678 1234 > foo
-	./transpose2 -m 20m < foo > bar.1
+	./transpose -m 20m < foo > bar.1
 	./check_transpose foo bar.1
 	@echo
-	./transpose2 -m 4m < foo > bar.2
+	./transpose -m 4m < foo > bar.2
 	./check_transpose foo bar.2
 	@echo
-	./transpose2 -m 500k < foo > bar.3
+	./transpose -m 500k < foo > bar.3
 	./check_transpose foo bar.3
 	@echo
 	rm foo bar.1 bar.2 bar.3
@@ -69,4 +69,4 @@ $(ZSTD_LIB_FILE): zstd/lib/zstd.h
 	(cd zstd; make lib)
 
 clean:
-	rm -f $(EXECS) *.o *.stackdump
+	rm -rf $(EXECS) *.o *.stackdump *.dSYM

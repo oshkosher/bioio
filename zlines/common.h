@@ -4,8 +4,13 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
+#endif
+
+#ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
+#endif
 
 /* If filename is "-", return stdin. Otherwise, open the given file
    for reading. */
