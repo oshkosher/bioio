@@ -15,380 +15,800 @@
   The goal of this is to support arbitrarily large data sets (much larger than
   memory) efficiently.
 
-  Performance snapshot, 2015-01-25:
-% ./transpose run1.chars /data/bioio/run1.chars.t
-run1.chars has 1999999 rows of length 21946 with unix line endings
-temp buffer 4096x4096
-43,800,008,320 of 43,891,978,054 bytes done
-transpose 1999999x21946 = 43891978054 bytes in 1084.340s at 38.6 MiB/s
-
-  source drive: SSD, destination hard: HDD
-
-
   Ed Karrels, edk@illinois.edu, January 2017
 */
-
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-#include <limits.h>
-#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include "common.h"
 
 typedef uint64_t u64;
 
-#define STATUS_REPORT_BYTE_INCREMENT (10*1000*1000)
-#define DEFAULT_TILE_SIZE (4 * 1024)
-#define VERBOSE 0
+#define DEFAULT_MEMORY_SIZE (32 * 1024 * 1024)
+#define IO_UPDATE_FREQUENCY (10*1024*1024)
+#define VERBOSE 1
+
+FILE *input_file, *output_file;
+u64 memory_size;
+const char *temp_directory;
+int input_width, input_height;  /* total input size */
+int read_buffer_rows_filled = 0;
+int quiet;
+Array2d read_buffer, write_buffer;
+
+char *temp_file_name = NULL;
+/* int temp_fd = -1; */
+FILE *temp_file = NULL;
 
 
-File2d in_file, out_file;
-Array2d in, out;
-double time_reading=0, time_transposing=0, time_writing=0;
-int tile_count, tiles_done=0;
-u64 bytes_done=0, byte_count;
-
-/* If nonzero, blocks read will progress to the right, then down, and
-   blocks written will progress down, then right.
-   If zero, the the opposite. */
-int move_right = 0;
-
-/* The data is processed in blocks. This is the number of rows in 
-   each block read and number of columns in each block written. */
-int read_block_height = 256;
-
-/* Number of columns in each block read and number of rows
-   in each block written. */
-int read_block_width = 256;
-
-int cache_ob_size = 128;
-
-int tile_size = DEFAULT_TILE_SIZE;
-
-int newline_type;
 
 void printHelp();
+int parseArgs(int argc, char **argv);
+size_t trimNewline(char *line, size_t len);
+int allocateBuffers();
+void deallocateBuffers();
 
-/* Transpose a 2d array. This will call one of the other transpose routines,
-   depending on the size of the array. */
-void transpose
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width);
+int insureTempFileExists();
+u64 tempFileOffset(int row, int col);
+u64 tempFileOffsetTx(int row, int col);
+int tempFileWrite(int row, int col, const char *src, u64 len);
+int tempFileRead(int row, int col, char *dest, u64 len);
+int tempFileReadTx(int row, int col, char *dest, u64 len);
+int removeTempFile();
+u64 getBlockBytes();       /* bytes per block */
+int getTotalBlockCount();  /* number of blocks */
 
-void transposeFiles(File2d *out, File2d *in, int tile_size);
-
-/* transpose the data using a block algorithm. */
-void transposeBlocks
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width);
-
-/* simple copy without transposing */
-void copy2d
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width);
-
-void copy2dToFile
-(File2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width);
-
-void copy2dFromFile
-(Array2d *dest, int dest_row, int dest_col,
- File2d *src, int src_row, int src_col,
- int height, int width);
-
-int do_status_reports = 1;
-void statusReport(int final);
-
+int readFile(FILE *input_file);
+int addLine(const char *line, int line_no);
+int flushWriteBufferToTemp(int first_row);
+int transposeData();
+int writeFile(FILE *output_file);
 
 int main(int argc, char **argv) {
+  double initial_time, start_time, elapsed, mbps;
+  u64 file_size;
   int result = 0;
-  /* int newline_len; */
-  double start_time, elapsed, mbps;
 
-  if (argc != 3) printHelp();
+  if (parseArgs(argc, argv)) return 1;
 
-  if (File2d_open(&in_file, argv[1], 0)) {
-    fprintf(stderr, "Failed to open %s\n", argv[1]);
-    return 1;
-  }
-
-  printf("%s has %d rows of length %d with %s line endings\n",
-         in_file.filename, in_file.n_rows, in_file.n_cols,
-         newlineName(in_file.newline_type));
-
-  out_file.n_rows = in_file.n_cols;
-  out_file.n_cols = in_file.n_rows;
-  out_file.newline_type = in_file.newline_type;
-
-  if (File2d_open(&out_file, argv[2], 1)) {
-    fprintf(stderr, "Failed to open %s\n", argv[2]);
-    return 1;
-  }
-
-  /* only print status reports if stdout is a terminal */
-  do_status_reports = isatty(1);
-  
-  start_time = getSeconds();
-
-  byte_count = (u64)in_file.n_rows * in_file.n_cols;
-  /* printf("%" PRIu64 " bytes of memory\n", getMemorySize()); */
-  tile_size = DEFAULT_TILE_SIZE;
-  tile_count = ((in_file.n_cols + tile_size - 1) / tile_size)
-    * ((in_file.n_rows + tile_size - 1) / tile_size);
-  
-  transposeFiles(&out_file, &in_file, tile_size);
-
-  File2d_close(&in_file);
-
-  /* the close time can be significant */
-  File2d_close(&out_file);
-
+  /* read the file */
+  initial_time = start_time = getSeconds();
+  if (readFile(input_file)) goto fail;
   elapsed = getSeconds() - start_time;
-  mbps = byte_count / (elapsed * 1024 * 1024);
-  printf("transpose %dx%d = %" PRIu64" bytes in %.3fs at %.1f MiB/s\n",
-         in_file.n_rows, in_file.n_cols, byte_count, elapsed, mbps);
-  
+  file_size = (u64)input_height * input_width;
+  mbps = file_size / (1024*1024 * elapsed);
+  if (!quiet) {
+    char buf[50];
+    fprintf(stderr, "%d x %d = %s bytes read in %.3fs, %.3f MiB/s\n",
+            input_height, input_width, commafy(buf, file_size), elapsed, mbps);
+  }
+
+  if (input_file != stdin) fclose(input_file);
+
+  /* transpose the data */
+  start_time = getSeconds();
+  if (transposeData()) goto fail;
+  if (!quiet) {
+    double elapsed = getSeconds() - start_time;
+    double mbps = file_size / (1024 * 1024 * elapsed);
+    fprintf(stderr, "Transpose time %.3fs, %.3f MiB/s\n", elapsed, mbps);
+  }
+
+  /* write the data */
+  start_time = getSeconds();
+  if (writeFile(output_file)) goto fail;
+  if (output_file != stdout) fclose(output_file);
+
+  if (!quiet) {
+    elapsed = getSeconds() - start_time;
+    mbps = file_size / (1024*1024 * elapsed);
+    fprintf(stderr, "Result written in %.3fs, %.3f MiB/s\n", elapsed, mbps);
+    elapsed = getSeconds() - initial_time;
+    mbps = file_size / (1024*1024 * elapsed);
+    fprintf(stderr, "Total time: %.3fs, %.3f MiB/s\n", elapsed, mbps);
+  }
+  goto done;
+
+ fail:
+  result = 1;
+ done:
+  removeTempFile();
+  deallocateBuffers();
+
   return result;
 }
 
 
 void printHelp() {
-  printf("\n  transpose <input_file> <output_file>\n"
-         "  Do a bytewise transpose of the lines of the given file.\n"
-         "  Every line in the file must be the same length.\n\n");
+  fprintf(stderr,
+          "\n  transpose [options]\n"
+          "  Read data from standard input, and output a bytewise transpose\n"
+          "  of that data to standard output.\n"
+          "  Every line in the file must be the same length.\n"
+          "  Options:\n"
+          "   -m <size> : use this much memory for the buffer\n"
+          "               k, m, g suffixes are recognized\n"
+          "   -d <directory> : use this directory for temporary files\n"
+          "   -q : suppress status output\n"
+          "   -i : read from this file rather than standard input\n"
+          "   -o : write to this file rather than standard output\n"
+          "\n");
   exit(1);
 }
 
 
-int createTempBuffer(Array2d *temp, int tile_size) {
-  u64 temp_size = (u64)tile_size * tile_size;
+int parseArgs(int argc, char **argv) {
+  int argno;
 
-  assert(in.n_cols > 0 && in.n_rows > 0);
+  memory_size = DEFAULT_MEMORY_SIZE;
+  temp_directory = ".";
+  input_file = stdin;
+  output_file = stdout;
+  quiet = 0;
 
-  if (in.n_cols < tile_size) {
-    temp->n_rows = in.n_cols;
-    temp->n_cols = MIN(in.n_rows, temp_size / in.n_cols);
-  } else if (in.n_rows < tile_size) {
-    temp->n_cols = in.n_rows;
-    temp->n_rows = MIN(in.n_cols, temp_size / in.n_rows);
-  } else {
-    temp->n_rows = tile_size;
-    temp->n_cols = tile_size;
+  if (isDirectory("/tmp")) {
+    temp_directory = "/tmp";
+  }
+  
+  argno = 1;
+  
+  while (argno < argc && argv[argno][0] == '-') {
+    if (!strcmp(argv[argno], "-")) {
+      break;
+    }
+      
+    else if (!strcmp(argv[argno], "-m")) {
+      argno++;
+      if (argno >= argc) printHelp();
+      if (parseSize(argv[argno], &memory_size)) {
+        fprintf(stderr, "Invalid memory size: \"%s\"\n", argv[argno]);
+        return 1;
+      }
+    }
+      
+    else if (!strcmp(argv[argno], "-q")) {
+      quiet = 1;
+    }
+      
+    else if (!strcmp(argv[argno], "-d")) {
+      argno++;
+      if (argno >= argc) printHelp();
+      if (!fileExists(argv[argno])) {
+        fprintf(stderr, "\"%s\" not found\n", argv[argno]);
+        return 1;
+      }
+      if (!isDirectory(argv[argno])) {
+        fprintf(stderr, "\"%s\" is not a directory\n", argv[argno]);
+        return 1;
+      }
+
+      temp_directory = argv[argno];
+    }
+
+    else if (!strcmp(argv[argno], "-i")) {
+      argno++;
+      if (argno >= argc) printHelp();
+      input_file = fopen(argv[argno], "r");
+      if (!input_file) {
+        fprintf(stderr, "Failed to open %s for reading.\n", argv[argno]);
+        return 1;
+      }
+    }
+
+    else if (!strcmp(argv[argno], "-o")) {
+      argno++;
+      if (argno >= argc) printHelp();
+      output_file = fopen(argv[argno], "w");
+      if (!input_file) {
+        fprintf(stderr, "Failed to open %s for writing.\n", argv[argno]);
+        return 1;
+      }
+    }
+
+    else if (!strcmp(argv[argno], "-h")) {
+      printHelp();
+    }
+
+    else {
+      fprintf(stderr, "Unrecognized option: %s\n", argv[argno]);
+      return 1;
+    }
+      
+    argno++;
   }
 
-  printf("temp buffer %dx%d\n", temp->n_rows, temp->n_cols);
-  temp->row_stride = temp->n_cols;
+  if (argno != argc) {
+    fprintf(stderr, "Extra unrecognized arguments.\n");
+    printHelp();
+  }
   
-  temp->data = (char*) malloc((u64)temp->n_cols * temp->n_rows);
-  if (!temp->data) {
-    fprintf(stderr, "Failed to allocate %dx%d temp buffer.\n",
-            temp->n_rows, temp->n_cols);
+  return 0;
+}
+  
+
+int readFile(FILE *input_file) {
+  char *line_buf = NULL;
+  size_t line_buf_capacity = 0;
+  ssize_t line_len;
+  int result = 0, line_no = 0;
+  u64 bytes_read = 0, next_update = IO_UPDATE_FREQUENCY;
+
+  input_width = -1;
+  input_height = -1;
+
+  while (1) {
+    line_len = getline(&line_buf, &line_buf_capacity, input_file);
+    if (line_len == -1) break;
+    bytes_read += line_len;
+
+    if (!quiet && bytes_read >= next_update) {
+      char buf[50];
+      fprintf(stderr, "\r%d rows, %s bytes read",
+              line_no + 1, commafy(buf, bytes_read));
+      next_update = bytes_read + IO_UPDATE_FREQUENCY;
+    }
+    
+    if (line_no == INT_MAX) {
+      fprintf(stderr, "Error: %" PRIu64 " lines read. "
+              "Only %d input lines are supported.\n",
+              (u64)line_no + 1, INT_MAX);
+      goto fail;
+    }
+
+    line_len = trimNewline(line_buf, line_len);
+
+    if (line_len > INT_MAX) {
+      fprintf(stderr, "Error: input line length %" PRIu64
+              " is longer than supported",
+              (u64)line_len);
+      goto fail;
+    }
+
+    if (input_width == -1) {
+      /* first line of input. this when we figure out how many columns there
+         are in the input. */
+      input_width = line_len;
+      if (allocateBuffers()) goto fail;
+    } else {
+      if (line_len != input_width) {
+        fprintf(stderr, "Inconsistent line lengths.\n"
+                "Line 1 had length %d, but line %d has length %d.\n",
+                input_width, line_no, (int)line_len);
+        goto fail;
+      }
+    }
+
+    if (addLine(line_buf, line_no++)) goto fail;
+  }
+  
+  if (!quiet) {
+    /*fprintf(stderr, "\r%d rows, %" PRIu64 " bytes read\n", line_no, bytes_read); */
+    fputc('\r', stderr);
+  }
+
+  if (addLine(NULL, line_no)) goto fail;
+
+  goto done;
+
+ fail:
+  result = 1;
+
+ done:
+  free(line_buf);
+  return result;
+}
+
+
+/* Trim newlines from the end of the line, either Unix-style or DOS.
+   Return the new length of the line. */
+size_t trimNewline(char *line, size_t len) {
+  if (line[len-1] == '\n') {
+    line[--len] = 0;
+    if (line[len-1] == '\r') {
+      line[--len] = 0;
+    }
+  }
+  return len;
+}
+
+
+/* Allocate the read buffer, write buffer, and if necessary, 
+   the temporary file. */
+int allocateBuffers() {
+  u64 mem_per_buffer = memory_size / 2;
+  int square_size;
+  int read_buffer_width, read_buffer_height;
+
+  assert(input_width > 0 && memory_size > 0);
+
+  square_size = (int) sqrt(mem_per_buffer);
+
+  read_buffer_width = MIN(input_width, square_size);
+  read_buffer_height = mem_per_buffer / read_buffer_width;
+  read_buffer_rows_filled = 0;
+
+  if (Array2d_init(&read_buffer, read_buffer_height, read_buffer_width,
+                   read_buffer_width)) {
+    fprintf(stderr, "Out of memory: failed to allocate %dx%d read buffer\n",
+            read_buffer_height, read_buffer_width);
     return 1;
+  }
+
+  if (Array2d_init(&write_buffer, read_buffer_width, read_buffer_height,
+                   read_buffer_height)) {
+    fprintf(stderr, "Out of memory: failed to allocate %dx%d write buffer\n",
+            read_buffer_width, read_buffer_height);
+    return 1;
+  }
+  if (!quiet) {
+    fprintf(stderr, "Read buffer %d x %d, write buffer %d x %d\n",
+            read_buffer_height, read_buffer_width,
+            read_buffer_width, read_buffer_height);
+  }
+
+  /* don't create a temp file yet */
+  
+  return 0;
+}
+
+
+void deallocateBuffers() {
+  free(read_buffer.data);
+  free(write_buffer.data);
+}
+
+
+
+int insureTempFileExists() {
+  int temp_fd;
+
+  if (temp_file) return 0;
+
+  assert(temp_directory && !temp_file_name);
+  /*
+  temp_file_name = tempnam(temp_directory, "transpose_tmp.");
+  */
+  
+  temp_file_name = (char*)malloc(strlen(temp_directory) + 22);
+  if (!temp_file_name) {
+    fprintf(stderr, "Out of memory creating temp file.\n");
+    return -1;
+  }
+  snprintf(temp_file_name, strlen(temp_directory) + 22,
+           "%s/transpose_tmp.XXXXXX", temp_directory);
+
+  temp_fd = mkstemp(temp_file_name);
+  if (temp_fd == -1) {
+    fprintf(stderr, "Failed to open temp file in %s\n", temp_directory);
+    return -1;
+  }
+
+  temp_file = fdopen(temp_fd, "w+");
+  if (!temp_file) {
+    fprintf(stderr, "Failed to access temp file %s\n", temp_file_name);
+    return -1;
+  }
+
+  /*
+  if (!quiet)
+    fprintf(stderr, "Using temp file %s\n", temp_file_name);
+  */
+
+  return 0;
+}
+
+
+/* Return the offset in the temp file of the given input row and column.
+ */
+u64 tempFileOffset(int row, int col) {
+  int block_row_idx, block_col_idx;
+  int blocks_per_row;
+  int row_in_block, col_in_block;
+  u64 block_size, block_start, offset;
+
+  assert(read_buffer.n_cols > 0 && read_buffer.n_rows > 0);
+  
+  block_row_idx = row / read_buffer.n_rows;
+  block_col_idx = col / read_buffer.n_cols;
+
+  block_size = (u64)read_buffer.n_cols * read_buffer.n_rows;
+
+  blocks_per_row = (input_width + read_buffer.n_cols - 1) / read_buffer.n_cols;
+  
+  block_start = block_size * (block_row_idx * blocks_per_row + block_col_idx);
+
+  row_in_block = row % read_buffer.n_rows;
+  col_in_block = col % read_buffer.n_cols;
+  
+  offset = block_start
+    + (row_in_block * read_buffer.n_cols)
+    + col_in_block;
+
+  return offset;
+}  
+
+
+/* Return the offset in the temp file of the given input row and column.
+   The row and column are referencing the output file, and each block
+   in the temp file has been transposed.
+ */
+u64 tempFileOffsetTx(int row, int col) {
+  int block_row_idx, block_col_idx;
+  int blocks_per_row;
+  int row_in_block, col_in_block;
+  u64 block_size, block_start, offset;
+
+  assert(read_buffer.n_cols > 0 && read_buffer.n_rows > 0);
+  
+  block_row_idx = col / read_buffer.n_rows;
+  block_col_idx = row / read_buffer.n_cols;
+
+  block_size = (u64)read_buffer.n_cols * read_buffer.n_rows;
+
+  blocks_per_row = (input_width + read_buffer.n_cols - 1) / read_buffer.n_cols;
+  
+  block_start = block_size * (block_row_idx * blocks_per_row + block_col_idx);
+
+  row_in_block = row % write_buffer.n_rows;
+  col_in_block = col % write_buffer.n_cols;
+  
+  offset = block_start
+    + (row_in_block * write_buffer.n_cols)
+    + col_in_block;
+
+  return offset;
+}  
+
+
+/* Write to the temp file at the given coordinates. The coordinates are
+   in terms of the input file.
+
+   Note that 2-d chunks are contiguous, not rows, and the chunks are the
+   size of read_buffer. So if read_buffer is 100x100, byte 101 is
+   (row 1, column 1), not (row 0, column 101). */
+int tempFileWrite(int row, int col, const char *src, u64 len) {
+  u64 offset = tempFileOffset(row, col);
+  if (fseek(temp_file, offset, SEEK_SET) ||
+      1 != fwrite(src, len, 1, temp_file)) {
+    fprintf(stderr, "Failed to write %" PRIu64 " bytes at offset %" PRIu64
+            " of %s. Disk full?\n", len, offset, temp_file_name);
+    return -1;
+  } else {
+    return 0;
+  }
+}
+
+
+/* Read from the temp file at the given coordinates. The coordinates are
+   in terms of the input file. */
+int tempFileRead(int row, int col, char *dest, u64 len) {
+  u64 offset = tempFileOffset(row, col);
+  if (fseek(temp_file, offset, SEEK_SET) ||
+      1 != fread(dest, len, 1, temp_file)) {
+    fprintf(stderr, "Failed to read %" PRIu64 " bytes at offset %" PRIu64
+            " of %s.?\n", len, offset, temp_file_name);
+    return -1;
+  } else {
+    return 0;
+  }
+}
+
+
+/* Read from the temp file at the given coordinates. The coordinates are
+   in terms of the output file, and the file has been transposed, so the
+   blocks are in input order, but within each block the data has been
+   transposed. */
+int tempFileReadTx(int row, int col, char *dest, u64 len) {
+  u64 offset = tempFileOffsetTx(row, col);
+  if (fseek(temp_file, offset, SEEK_SET) ||
+      1 != fread(dest, len, 1, temp_file)) {
+    fprintf(stderr, "Failed to read %" PRIu64 " bytes at offset %" PRIu64
+            " of %s.?\n", len, offset, temp_file_name);
+    return -1;
+  } else {
+    return 0;
+  }
+}
+
+
+int removeTempFile() {
+  if (temp_file_name && temp_file) {
+    fclose(temp_file);
+    if (remove(temp_file_name)) {
+      fprintf(stderr, "Error removing temp file %s: %s\n",
+              temp_file_name, strerror(errno));
+      return -1;
+    }
+  }
+  free(temp_file_name);
+  return 0;
+}
+
+
+/* bytes per block */
+u64 getBlockBytes() {
+  return (u64) read_buffer.n_rows * read_buffer.n_cols;
+}
+
+  
+/* number of blocks */
+int getTotalBlockCount() {
+  static u64 block_count = 0;
+
+  assert(input_width > 0 && input_height > 0 && read_buffer.n_cols > 0 &&
+         read_buffer.n_rows > 0);
+
+  if (block_count) return block_count;
+
+  block_count = 
+    (input_width + read_buffer.n_cols - 1) / read_buffer.n_cols;
+  block_count *=
+    (input_height + read_buffer.n_rows - 1) / read_buffer.n_rows;
+
+  /* check for int overflow */
+  assert(block_count <= INT_MAX);
+
+  return (int)block_count;
+}
+
+
+/* There are 3 states:
+   1. The input data is narrower than the read buffer, and we haven't yet
+      read more rows of input data that what fit in the read buffer.
+      (input_width <= read_buffer.n_cols && line_no < read_buffer.n_rows)
+
+      Everything is still in memory. Append the new line.
+
+   2. The input data is narrower than the read buffer, but we've read more
+      lines than can fit in the read buffer.
+      (input_width <= read_buffer.n_cols && line_no >= read_buffer.n_rows)
+      
+      When the read buffer fills up, write the whole thing to the temp
+      file, a block at a time.
+
+   3. The input data is wider than the read buffer.
+      (input_width > read_buffer.n_cols)
+
+      On each input line, split it into sections of read buffer width,
+      and write each to the appropriate place in the temp file.
+*/
+int addLine(const char *line, int line_no) {
+
+  /* when this is called with line==NULL, then all data has been read */
+  if (line == NULL) {
+    input_height = line_no;
+
+    if (temp_file) {
+      u64 file_len = getBlockBytes() * getTotalBlockCount();;
+
+      /* if we've be buffering in-memory, transpose the buffer and flush it */
+      if (read_buffer_rows_filled > 0) {
+        assert(input_width <= read_buffer.n_cols);
+
+        if (flushWriteBufferToTemp(input_height - read_buffer_rows_filled))
+          return -1;
+
+        /*
+        fprintf(stderr, "Flushed last block, file is %ld bytes, "
+                "should be %" PRIu64 "\n", ftell(temp_file), file_len);
+        */
+        assert(ftell(temp_file) == file_len);
+                
+      } else {
+
+        /* make sure the final block of data is complete in the temp file,
+           even if the unneeded data at the end is all zeros */
+
+        /* set the file length */
+        if (ftruncate(fileno(temp_file), file_len)) {
+          fprintf(stderr, "Failed to set length of %s to %" PRIu64
+                  " (out of disk space?)\n", temp_file_name, file_len);
+          return -1;
+        }
+
+      }
+    }
+    return 0;
+  }
+
+  assert(strlen(line) == input_width);
+  
+  /* If input lines fit in the input buffer, add this line to the buffer */
+  if (input_width <= read_buffer.n_cols) {
+
+    /* the buffer is full, flush it to the temp file */
+    if (read_buffer_rows_filled == read_buffer.n_rows)
+      if (flushWriteBufferToTemp(line_no - read_buffer_rows_filled))
+        return -1;
+    
+    memcpy(Array2d_ptr(&read_buffer, read_buffer_rows_filled, 0),
+           line, input_width);
+    read_buffer_rows_filled++;
+
+  } else {
+    int line_block_col, block_len;
+  
+    if (insureTempFileExists()) return -1;
+    
+    /* copy each chunk of the line to the temp file */
+    for (line_block_col = 0; line_block_col < input_width;
+         line_block_col += read_buffer.n_cols) {
+      block_len = MIN(read_buffer.n_cols, input_width - line_block_col);
+      if (tempFileWrite(line_no, line_block_col, line + line_block_col,
+                        block_len))
+        return -1;
+    }
+  }
+  return 0;
+}
+
+
+int flushWriteBufferToTemp(int first_row) {
+  if (insureTempFileExists()) return -1;
+
+  transpose(&write_buffer, 0, 0, &read_buffer, 0, 0,
+            read_buffer_rows_filled, input_width);
+
+  assert(first_row % read_buffer.n_rows == 0);
+  if (tempFileWrite(first_row, 0, write_buffer.data, getBlockBytes()))
+    return -1;
+
+  read_buffer_rows_filled = 0;
+
+  return 0;
+}
+
+
+
+/* If the data is all in the read buffer, just transpose it into the write
+   buffer. 
+
+   If it's in the temp file, scan through the temp file, transposing each
+   block in place.
+*/
+int transposeData() {
+  int row, col, height, width, block_no = 0;
+  u64 nbytes = (u64)read_buffer.n_rows * read_buffer.n_cols;
+  double time_reading = 0, time_writing = 0, time_transposing = 0, s;
+
+  /* if there's a temp file, transpose every block in it */
+  if (temp_file) {
+
+    /* shortcut--when reading, if the data was narrower than the read buffer,
+       it was transpose before it was written to the temp file. */
+    if (input_width <= read_buffer.n_cols) return 0;
+
+    for (row=0; row < input_height; row += read_buffer.n_rows) {
+      height = MIN(read_buffer.n_rows, input_height - row);
+      for (col=0; col < input_width; col += read_buffer.n_cols) {
+        width = MIN(read_buffer.n_cols, input_width - col);
+
+        if (!quiet) {
+          int blocks = getTotalBlockCount();
+          fprintf(stderr, "\rTranspose block %d of %d, %.1f%% done",
+                  block_no, blocks, 100.0 * block_no / blocks);
+        }
+        block_no++;
+
+        s = getSeconds();
+        if (tempFileRead(row, col, read_buffer.data, nbytes))
+          return -1;
+        time_reading += getSeconds() - s;
+
+        s = getSeconds();
+        transpose(&write_buffer, 0, 0, &read_buffer, 0, 0,
+                  height, width);
+        time_transposing += getSeconds() - s;
+
+        s = getSeconds();
+        if (tempFileWrite(row, col, write_buffer.data, nbytes))
+          return -1;
+        time_writing += getSeconds() - s;
+      }
+    }
+  }
+
+  /* the data fit in the read buffer, transpose it into the write buffer */
+  else {
+    s = getSeconds();
+    transpose(&write_buffer, 0, 0, &read_buffer, 0, 0,
+              read_buffer.n_rows, read_buffer.n_cols);
+    time_transposing += getSeconds() - s;
+  }
+
+  if (!quiet) {
+    if (temp_file) {
+      fprintf(stderr, "\r%d blocks transposed, %.3fs reading, "
+              "%.3fs transposing, %.3fs writing\n",
+             getTotalBlockCount(), time_reading, time_transposing, time_writing);
+    } else {
+      fprintf(stderr, "%dx%d transpose time %.3fs\n", input_height, input_width,
+              time_transposing);
+    }
   }
 
   return 0;
 }
 
 
-void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
-  Array2d in, out;
-  int row, x, y, block_width, block_height;
-  double start_time, elapsed;
+/* If the data is all in the write buffer, just write it to stdout.
 
-  in.n_rows = out.n_cols = in.n_cols = out.n_rows = in.row_stride =
-    tile_size;
+   If it's in the temp file, splice together each line of output and
+   write them to stdout.
+*/
+int writeFile(FILE *output_file) {
+  int row, col, width, result = 0;
+  char *output_row = (char*) malloc(input_height + 2);
+  u64 bytes_written = 0, next_update = IO_UPDATE_FREQUENCY;
 
-  /* allocate an extra column or two for 'out', so it can efficiently write
-     newlines to the output file */
-  out.row_stride = tile_size + newlineLength(out_file->newline_type);
+  if (!output_row) {
+    fprintf(stderr, "Out of memory: failed to allocate output row buffer\n");
+    return -1;
+  }
+  strcpy(output_row + input_height, "\n");
 
-  /* allocate data for an input buffer and output buffer */
-  in.data = (char*)malloc(in.n_rows * in.row_stride);
-  out.data = (char*)malloc(out.n_rows * out.row_stride);
-  assert(in.data && out.data);
+  if (temp_file) {
+    /* loop through the output rows */
+    for (row=0; row < input_width; row++) {
 
-  /* read blocks of the input file, transpose them, and write blocks to
-     the output file. */
-  for (x = 0; x < in_file->n_cols; x += in.n_cols) {
-    block_width = MIN(in.n_cols, in_file->n_cols - x);
+      /* read each chunk of the line */
+      for (col=0; col < input_height; col += write_buffer.n_cols) {
+        width = MIN(write_buffer.n_cols, input_height - col);
 
-    for (y = 0; y < in_file->n_rows; y += in.n_rows) {
-      block_height = MIN(in.n_rows, in_file->n_rows - y);
-
-      /* read a block into input buffer */
-      start_time = getSeconds();
-      copy2dFromFile(&in, 0, 0, in_file, y, x, block_height, block_width);
-      elapsed = getSeconds() - start_time;
-      time_reading += elapsed;
-#if VERBOSE > 1
-      printf("read %dx%d block %.3fs\n", block_height, block_width, elapsed);
-#endif
-
-      /* transpose that block into the output buffer */
-      start_time = getSeconds();
-      transpose(&out, 0, 0, &in, 0, 0, block_height, block_width);
-      elapsed = getSeconds() - start_time;
-      time_transposing += elapsed;
-#if VERBOSE > 1
-      printf("  transpose %.3fs\n", elapsed);
-#endif
-      bytes_done += (u64)block_width * block_height;
-
-      /* if this is the last block of the row, write the newlines as well. */
-      if (y + block_height == out_file->n_cols) {
-        for (row = 0; row < block_width; row++)
-          writeNewline(Array2d_ptr(&out, row, block_height),
-                       out_file->newline_type);
-      
-        block_height += newlineLength(out_file->newline_type);
+        if (tempFileReadTx(row, col, output_row + col, width)) goto fail;
       }
 
-      /* write the output buffer to the output file */
-      start_time = getSeconds();
-      copy2dToFile(out_file, x, y, &out, 0, 0, block_width, block_height);
-      elapsed = getSeconds() - start_time;
-      time_writing += elapsed;
-      tiles_done++;
-#if VERBOSE > 1
-      printf("  write %.3fs\n", elapsed);
-#endif
+      if (1 != fwrite(output_row, input_height + 1, 1, output_file)) {
+        fprintf(stderr, "Failed to write output row %d (disk full?)\n", row);
+        goto fail;
+      }
+      bytes_written += input_height + 1;
 
-      statusReport(0);
+      if (!quiet && bytes_written > next_update) {
+        fprintf(stderr, "\r%d of %d lines written, %.1f%% done",
+                row, input_width, row * 100.0 / input_width);
+        next_update = bytes_written + IO_UPDATE_FREQUENCY;
+      }
+    }
 
+  } else {
+    /* just write out the write buffer */
+    for (row=0; row < input_width; row++) {
+      memcpy(output_row, Array2d_ptr(&write_buffer, row, 0), input_height);
+      if (1 != fwrite(output_row, input_height + 1, 1, output_file)) {
+        fprintf(stderr, "Failed to write output row %d (disk full?)\n", row);
+        goto fail;
+      }
+      bytes_written += input_height + 1;
+
+      if (!quiet && bytes_written > next_update) {
+        fprintf(stderr, "\r%d of %d lines written, %.1f%% done",
+                row, input_width, row * 100.0 / input_width);
+        next_update = bytes_written + IO_UPDATE_FREQUENCY;
+      }
     }
   }
 
-  free(in.data);
-  free(out.data);
+  /* fprintf(stderr, "%" PRIu64 " bytes written\n", bytes_written); */
+  if (!quiet) fputc('\r', stderr);
 
-  statusReport(1);
-  printf("read time %.3fs, in-memory transpose time %.3fs, "
-         "write time %.3fs\n",
-         time_reading, time_transposing, time_writing);
-}
-
-
-/* height and width are in terms of the src array */
-void transposeBlocks(Array2d *dest, int dest_row, int dest_col,
-                     Array2d *src, int src_row, int src_col,
-                     int height, int width) {
-
-  int x, y, block_width, block_height;
+  goto done;
   
-  for (x = 0; x < width; x += read_block_width) {
-    block_width = MIN(read_block_width, width - x);
-
-    for (y = 0; y < height; y += read_block_height) {
-      block_height = MIN(read_block_height, height - y);
-
-      transposeTile(dest, dest_row + x, dest_col + y,
-                    src, dest_row + y, src_col + x,
-                    block_height, block_width);
-
-    }
-  }
-
+ fail:
+  result = -1;
+ done:
+  free(output_row);
+  return result;
 }
 
-                
-/* simple copy without transposing */
-void copy2d
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width) {
-
-  int row;
-
-  for (row = 0; row < height; row++) {
-    memcpy(Array2d_ptr(dest, dest_row + row, dest_col),
-           Array2d_ptr(src, src_row + row, src_col),
-           width);
-
-    if (dest == &out && dest_col + width == dest->n_cols)
-      writeNewline(Array2d_ptr(dest, dest_row + row, dest->n_cols),
-                   newline_type);
-  }
-}
-
-
-void copy2dToFile
-(File2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
- int height, int width) {
-  int row;
-  u64 file_offset;
-
-  for (row = 0; row < height; row++) {
-    file_offset = File2d_offset(dest, dest_row + row, dest_col);
-    if (width != pwrite(dest->fd, Array2d_ptr(src, src_row + row, src_col),
-                        width, file_offset)) {
-      fprintf(stderr, "Error writing %d bytes to %s at offset %" PRIu64 "\n",
-              width, dest->filename, file_offset);
-    }
-  }
-}
-  
-
-void copy2dFromFile
-(Array2d *dest, int dest_row, int dest_col,
- File2d *src, int src_row, int src_col,
- int height, int width) {
-  int row;
-  u64 file_offset;
-
-  for (row = 0; row < height; row++) {
-    file_offset = File2d_offset(src, src_row + row, src_col);
-    if (width != pread(src->fd, Array2d_ptr(dest, dest_row + row, dest_col),
-                        width, file_offset)) {
-      fprintf(stderr, "Error read %d bytes from %s at offset %" PRIu64 "\n",
-              width, src->filename, file_offset);
-    }
-  }
-}
-
-
-/* Call this to print a status update occasionally.
-   It reads these global variables:
-     tile_count
-     tiles_done
-     in_file.n_rows
-     in_file.n_cols
-     bytes_done
-     time_reading
-     time_transposing
-     time_writing
-   If 'final' is nonzero, all the processing is done, so print at final
-   status report with a trailing newline.
-*/
-void statusReport(int final) {
-  static u64 next_report = 0;
-  char buf1[50];
-  double pct_done;
-  
-  if (!do_status_reports) return;
-  if (!final && bytes_done < next_report) return;
-
-  pct_done = 100.0 * bytes_done / byte_count;
-  
-  printf("\r%.2f%% of %s bytes done, %d of %d tiles"
-         /* ", r=%.3f tx=%.3f w=%.3f"*/
-         , pct_done, commafy(buf1, byte_count), tiles_done, tile_count
-         /*, time_reading, time_transposing, time_writing */
-         );
-         
-  if (final) putchar('\n');
-  fflush(stdout);
-  next_report += STATUS_REPORT_BYTE_INCREMENT;
-}

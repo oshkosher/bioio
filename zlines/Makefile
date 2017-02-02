@@ -1,4 +1,4 @@
-EXECS = create_2d_data zlines zlines_test transpose transpose2 \
+EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
   check_transpose
 
 all: $(EXECS)
@@ -30,7 +30,7 @@ zlines_test: zlines_test.c zline_api.o common.o
 transpose: transpose.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
-transpose2: transpose2.c common.o
+transpose_v0: transpose_v0.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 check_transpose: check_transpose.c common.o
@@ -43,23 +43,19 @@ disk_speed: disk_speed.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 
-test: create_2d_data transpose transpose2 test_transpose2
+test: create_2d_data transpose check_transpose test_transpose
 
 test_transpose:
-	./create_2d_data 1234 5678 > foo
-	./transpose foo bar
-	./transpose bar foo2
-	shasum foo foo2
-	rm foo bar foo2
-
-test_transpose2:
 	./create_2d_data 5678 1234 > foo
 	./transpose2 -m 20m < foo > bar.1
 	./check_transpose foo bar.1
+	@echo
 	./transpose2 -m 4m < foo > bar.2
 	./check_transpose foo bar.2
+	@echo
 	./transpose2 -m 500k < foo > bar.3
 	./check_transpose foo bar.3
+	@echo
 	rm foo bar.1 bar.2 bar.3
 
 # acquire and build the Facebook ZSTD compression library
