@@ -464,7 +464,7 @@ u64 tempFileOffsetTx(int row, int col) {
   col_in_block = col % write_buffer.n_cols;
   
   offset = block_start
-    + (row_in_block * write_buffer.n_cols)
+    + ((u64)row_in_block * write_buffer.n_cols)
     + col_in_block;
 
   return offset;

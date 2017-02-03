@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
   array2.n_cols = file1.n_rows;
   array2.n_rows = file1.n_cols;
   array2.row_stride = file1.n_rows + newlineLength(file1.newline_type);
-  file2_len = array2.row_stride * array2.n_rows;
+  file2_len = (u64)array2.row_stride * array2.n_rows;
 
   if (mapFile(argv[2], 1, &array2.data, &file2_len)) {
     printf("Failed to open %s\n", argv[2]);
