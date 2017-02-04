@@ -4,6 +4,24 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#ifdef _WIN32
+#define PRIu64 "I64u"
+#define SCNu64 "I64u"
+#define open _open
+#define lseek _lseeki64
+#define read _read
+#define close _close
+#define ftruncate _chsize_s
+#ifdef _WIN64
+typedef int64_t ssize_t;
+#else
+typedef int32_t ssize_t;
+#endif
+ssize_t getline(char **bufptr, size_t *n, FILE *fp);
+#else
+#include <inttypes.h>
+#endif
+
 #ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #endif
@@ -37,10 +55,10 @@ int mapFile(const char *filename, int for_writing, char **data,
 const char *commafy(char *buf, uint64_t n);
 
 /* Return a relative time in seconds. */
-double getSeconds();
+double getSeconds(void);
 
 /* Returns the amount of physical memory. */
-uint64_t getMemorySize();
+uint64_t getMemorySize(void);
     
 /* Parse a number with a case-insensitive magnitude suffix:
      k : multiply by 1024
@@ -97,6 +115,5 @@ void transposeTile
 #define newlineLength(newline_type) (newline_type)
 #define newlineName(newline_type) ((newline_type)==(NEWLINE_DOS)?"DOS":"unix")
 void writeNewline(char *dest, int newline_type);
-
 
 #endif /* __COMMON_H__ */

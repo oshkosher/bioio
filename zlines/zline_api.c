@@ -2,11 +2,14 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
-#include <inttypes.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include "zline_api.h"
 #include "zstd.h"
 #include "common.h"

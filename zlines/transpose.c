@@ -20,18 +20,19 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include "common.h"
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 typedef uint64_t u64;
 
@@ -199,7 +200,7 @@ int parseArgs(int argc, char **argv) {
     else if (!strcmp(argv[argno], "-i")) {
       argno++;
       if (argno >= argc) printHelp();
-      input_file = fopen(argv[argno], "r");
+      input_file = fopen(argv[argno], "rb");
       if (!input_file) {
         fprintf(stderr, "Failed to open %s for reading.\n", argv[argno]);
         return 1;
@@ -209,7 +210,7 @@ int parseArgs(int argc, char **argv) {
     else if (!strcmp(argv[argno], "-o")) {
       argno++;
       if (argno >= argc) printHelp();
-      output_file = fopen(argv[argno], "w");
+      output_file = fopen(argv[argno], "wb");
       if (!input_file) {
         fprintf(stderr, "Failed to open %s for writing.\n", argv[argno]);
         return 1;
@@ -376,10 +377,15 @@ int insureTempFileExists() {
   if (temp_file) return 0;
 
   assert(temp_directory && !temp_file_name);
-  /*
-  temp_file_name = tempnam(temp_directory, "transpose_tmp.");
-  */
-  
+
+#ifdef _WIN32
+  temp_file_name = _tempnam(temp_directory, "transpose_tmp.");
+  if (!temp_file_name) {
+    fprintf(stderr, "Failed to open temp file in %s\n", temp_directory);
+    return -1;
+  }
+  temp_file = fopen(temp_file_name, "wb+");
+#else  
   temp_file_name = (char*)malloc(strlen(temp_directory) + 22);
   if (!temp_file_name) {
     fprintf(stderr, "Out of memory creating temp file.\n");
@@ -394,7 +400,8 @@ int insureTempFileExists() {
     return -1;
   }
 
-  temp_file = fdopen(temp_fd, "w+");
+  temp_file = fdopen(temp_fd, "wb+");
+#endif
   if (!temp_file) {
     fprintf(stderr, "Failed to access temp file %s\n", temp_file_name);
     return -1;

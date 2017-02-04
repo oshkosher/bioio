@@ -2,18 +2,43 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+typedef int mode_t;
+#define STAT_FN _stat64
+#define STAT_STRUCT __stat64
+#define S_ISDIR(mode) ((mode) & _S_IFDIR)
+#define O_RDWR  _O_RDWR
+#define O_RDONLY _O_RDONLY
+#define O_CREAT _O_CREAT
+#define O_TRUNC _O_TRUNC
+#define S_IRUSR _S_IREAD
+#define S_IWUSR _S_IWRITE
+#define S_IRGRP 0
+#define S_IROTH 0
+#define REPORT_ERROR(context, isFatal) \
+  reportError(__FILE__, __LINE__, context, isFatal);
+void reportError(const char *filename, int lineNo,
+		 const char *context, int die);
+int64_t pread(int fildes, void *buf, uint64_t nbyte, uint64_t offset);
+int64_t pwrite(int fildes, const void *buf, uint64_t nbyte, uint64_t offset);
+#else
+#include <sys/mman.h>
+#include <sys/time.h>
 #include <unistd.h>
+#define STAT_FN stat
+#define STAT_STRUCT stat
+#endif
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
@@ -49,24 +74,27 @@ int fileExists(const char *filename) {
   
 
 u64 getFileSize(const char *filename) {
-   struct stat stats;
-   if (stat(filename, &stats)) {
+  struct STAT_STRUCT statbuf;
+  
+   if (STAT_FN(filename, &statbuf)) {
     fprintf(stderr, "Error getting size of \"%s\": %s\n",
 	    filename, strerror(errno));
     return 0;
   } else {
-    return stats.st_size;
+    return statbuf.st_size;
   }
 }
 
 /* Return nonzero if the given filename exists and is a directory. */
 int isDirectory(const char *filename) {
-  struct stat statbuf;
+  struct STAT_STRUCT statbuf;
 
-  return !stat(filename, &statbuf) &&
+  return !STAT_FN(filename, &statbuf) &&
     S_ISDIR(statbuf.st_mode);
-}  
+}
 
+
+#ifndef _WIN32
 
 /* If for_writing is nonzero, the file will be set to the length *length.
    Otherwise, *length will be set to the length of the file. */
@@ -113,6 +141,14 @@ int mapFile(const char *filename, int for_writing, char **data, u64 *length) {
   return 0;
 }
 
+#else /* _WIN32 */
+int mapFile(const char *filename, int for_writing, char **data, u64 *length) {
+  fprintf(stderr, "mapFile not implemented yet on Windows\n");
+  return -1;
+}
+#endif
+
+
 
 /* format a number with commas every 3 digits: 1234567 -> "1,234,567".
    The string will be written to buf (which must be at least 21 bytes),
@@ -139,8 +175,8 @@ const char *commafy(char *buf, u64 n) {
 
   p = buf;
   while (len > 0) {
-    int digit = n/factor;
-    *p++ = '0' + digit;
+    int digit = (int)(n/factor);
+    *p++ = (char)('0' + digit);
     n -= digit * factor;
     len--;
     if (len > 0 && (len % 3) == 0) *p++ = ',';
@@ -152,46 +188,74 @@ const char *commafy(char *buf, u64 n) {
 }
 
 
+#ifdef _WIN32
+static LARGE_INTEGER timer_frequency;
+double getSeconds(void) {
+  static int first_call = 1;
+  LARGE_INTEGER counter;
+
+  if (first_call) {
+    if (!QueryPerformanceFrequency(&timer_frequency))
+      REPORT_ERROR("High-resolution performance counter not supported.", 1);
+    first_call = 0;
+  }
+  
+  if (!QueryPerformanceCounter(&counter))
+    REPORT_ERROR("calling QueryPerformanceCounter", 1);
+
+  return counter.QuadPart / (double) timer_frequency.QuadPart;
+}
+
+#elif __APPLE__
 double getSeconds() {
-  /*
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return t.tv_sec + 1e-9 * t.tv_nsec;
-  */
   struct timeval t;
   gettimeofday(&t, NULL);
   return t.tv_sec + t.tv_usec * 0.000001;
 }
 
+#else
+double getSeconds() {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return t.tv_sec + 1e-9 * t.tv_nsec;
+}
+#endif
+
 
 /* Returns the amount of physical memory. */
-uint64_t getMemorySize() {
+uint64_t getMemorySize(void) {
+#ifdef _WIN32
+  MEMORYSTATUSEX memory;
+
+  GlobalMemoryStatusEx(&memory);
+  return memory.ullTotalPhys;
+
+#elif __APPLE__
+  int mib[2] = { CTL_HW, HW_MEMSIZE };
+  unsigned namelen = sizeof(mib) / sizeof(mib[0]);
+  u64 size;
+  size_t len = sizeof(size);
+
+  if (sysctl(mib, namelen, &size, &len, NULL, 0) < 0) {
+    perror("sysctl");
+    return 0;
+  } else {
+    return size;
+  }
+}
+
+#else  
   long page_size, page_count;
-  u64 total_mem = 0;
 
   page_size = sysconf(_SC_PAGE_SIZE);
   page_count = sysconf(_SC_PHYS_PAGES);
 
   if (page_size > 0 && page_count > 0) {
-    total_mem = (u64)page_size * page_count;
-  }
-
-#ifdef __APPLE__
-  if (total_mem == 0) {
-    int mib[2] = { CTL_HW, HW_MEMSIZE };
-    unsigned namelen = sizeof(mib) / sizeof(mib[0]);
-    u64 size;
-    size_t len = sizeof(size);
-
-    if (sysctl(mib, namelen, &size, &len, NULL, 0) < 0) {
-      perror("sysctl");
-    } else {
-      total_mem = size;
-    }
+    return (u64)page_size * page_count;
+  } else {
+    return 0;
   }
 #endif
-
-  return total_mem;
 }
 
     
@@ -205,12 +269,14 @@ uint64_t getMemorySize() {
 */
 int parseSize(const char *str, u64 *result) {
   u64 multiplier = 1;
+  const char *last;
+  char suffix;
   
   /* missing argument check */
   if (!str || !str[0]) return 1;
 
-  const char *last = str + strlen(str) - 1;
-  char suffix = tolower((int)*last);
+  last = str + strlen(str) - 1;
+  suffix = (char)tolower((int)*last);
   if (suffix == 'k')
     multiplier = 1024;
   else if (suffix == 'm')
@@ -248,7 +314,7 @@ int Array2d_init(Array2d *array, int n_rows, int n_cols, int row_stride) {
 int File2d_open(File2d *f, const char *filename, int for_writing) {
   int flags;
   mode_t mode = 0;
-  u64 length, first_line_len, row;
+  u64 length = 0, first_line_len, row, offset;
   char buf[10];
 
   if (for_writing) {
@@ -261,6 +327,10 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
     length = getFileSize(filename);
     if (length == 0) goto fail;
   }
+
+#ifdef _WIN32
+    flags |= _O_BINARY;
+#endif
   
   f->filename = filename;
   f->fd = open(filename, flags, mode);
@@ -302,14 +372,14 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
     }
     f->newline_type = (buf[0] == '\r') ? NEWLINE_DOS : NEWLINE_UNIX;
 
-    f->row_stride = first_line_len + 1;
+    f->row_stride = (int)first_line_len + 1;
     f->n_cols = f->row_stride - newlineLength(f->newline_type);
 
     /* For this tool to work correctly, every line of the file must have
        the same length. Don't check every line, but check that the file
        size is an integer multiple of the line length. */
     
-    f->n_rows = length / f->row_stride;
+    f->n_rows = (int)(length / f->row_stride);
     if (length != f->n_rows * (u64)f->row_stride) {
       fprintf(stderr, "Invalid input file: uneven line lengths "
               "(rows appear to be %d bytes each, but that doesn't evenly "
@@ -322,8 +392,9 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
        in a few more rows. */
 
     for (row=10; row < f->n_rows; row *= 10) {
+      offset = File2d_offset(f, (int)row, (int)f->row_stride-1);
       /* printf("check row %d\n", (int)row); */
-      if (1 != pread(f->fd, buf, 1, File2d_offset(f, row, f->row_stride-1))) {
+      if (1 != pread(f->fd, buf, 1, offset)) {
         fprintf(stderr, "Input file error: read failed\n");
         goto fail;
       }
@@ -360,7 +431,7 @@ static int File2d_find_byte(File2d *f, char c) {
     found_pos = memchr(buf, c, read_len);
     if (found_pos) {
       lseek(f->fd, original_pos, SEEK_SET);
-      return pos + (found_pos - buf);
+      return (int)(pos + (found_pos - buf));
     }
     pos += read_len;
   } while (read_len == sizeof buf);
@@ -435,3 +506,91 @@ void writeNewline(char *dest, int newline_type) {
     dest[0] = '\n';
   }
 }
+
+
+#ifdef _WIN32
+
+  
+void reportError(const char *filename, int lineNo,
+		 const char *context, int die) {
+  LPVOID message_buffer;
+  FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM |
+                FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                FORMAT_MESSAGE_IGNORE_INSERTS,
+                NULL, GetLastError(), 0, (LPTSTR) &message_buffer, 0, NULL);
+  printf("%s:%d Error %d on %s: %s\n", filename, lineNo,
+	 GetLastError(), context, message_buffer);
+  LocalFree(message_buffer);
+  if (die) ExitProcess(1);
+}
+
+int64_t pread(int fildes, void *bufv, uint64_t nbyte, uint64_t offset) {
+  int64_t bytes_done = 0;
+  char *buf = (char*) bufv;
+  if (-1 == lseek(fildes, offset, SEEK_SET)) return -1;
+
+  /* handle nbyte > INT_MAX */
+  while (nbyte) {
+    int result, len = (int)MIN(nbyte, INT_MAX);
+    result = read(fildes, buf, len);
+    bytes_done += result;
+    if (result != len) return bytes_done;
+    nbyte -= len;
+    buf += len;
+  }
+  return bytes_done;
+}
+
+
+int64_t pwrite(int fildes, const void *bufv, uint64_t nbyte, uint64_t offset) {
+  int64_t bytes_done = 0;
+  const char *buf = (const char*) bufv;
+  if (-1 == lseek(fildes, offset, SEEK_SET)) return -1;
+
+  /* handle nbyte > INT_MAX */
+  while (nbyte) {
+    int result, len = (int)MIN(nbyte, INT_MAX);
+    result = write(fildes, buf, len);
+    bytes_done += result;
+    if (result != len) return bytes_done;
+    nbyte -= len;
+    buf += len;
+  }
+  return bytes_done;
+}
+
+
+ssize_t getline(char **bufptr, size_t *n, FILE *fp) {
+  size_t len = 0;
+  char *buf;
+  
+  assert(bufptr && n && fp);
+  if (!*bufptr || *n == 0) {
+    *n = 100;
+    *bufptr = (char*) malloc(*n);
+    assert(*bufptr);
+  }
+
+  buf = *bufptr;
+  
+  while (1) {
+    /* stop if we read the EOF before finding a newline */
+    if (!fgets(buf + len, *n - len, fp)) break;
+
+    len += strlen(buf + len);
+
+    if (buf[len-1] == '\n') break;
+
+    /* need to extend the buffer */
+    *n *= 2;
+    *bufptr = realloc(*bufptr, *n);
+    assert(*bufptr);
+    buf = *bufptr;
+  }
+
+  if (len == 0) return -1;
+
+  return (ssize_t)len;
+}
+
+#endif /* _WIN32 */

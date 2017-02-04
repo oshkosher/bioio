@@ -1,0 +1,87 @@
+# Set this to YES or NO, to select between a Debug or Release build
+# IS_DEBUG=YES
+IS_DEBUG=NO
+
+default: all
+
+EXECS = create_2d_data.exe zlines.exe zlines_test.exe transpose.exe \
+  transpose_v0.exe
+  
+
+all: $(EXECS)
+
+# zstd\build\VS_scripts\build.VS2012.cmd
+# zstd\build\VS_scripts\bin/Release/x64/zstd.exe
+# zstd\build\VS_scripts\bin/Release/x64/libzstd_static.lib
+
+!IF "$(IS_DEBUG)"=="YES"
+BUILD=Debug
+BUILD_FLAGS=/Zi /MDd /Od
+CL_OPT_FLAG=/MDd
+CC_OPT_FLAG=-g
+!ELSE
+BUILD=Release
+BUILD_FLAGS=/O2 /MT
+CL_OPT_FLAG=/MT
+CC_OPT_FLAG=-O2
+LINK_OPT=/link /NODEFAULTLIB:library /LTCG
+!ENDIF
+
+!IF "$(VISUALSTUDIOVERSION)"=="11.0"
+ZSTD_BUILD_CMD=zstd\build\VS_scripts\build.generic.cmd VS2012 x64 $(BUILD) v110
+!ENDIF
+
+ZSTD_INC=/Izstd\lib
+ZSTD_HEADER=zstd\lib\zstd.h
+ZSTD_LIB=zstd\build\VS_scripts\bin\$(BUILD)\x64\libzstd_static.lib
+
+
+# WARNINGS=/Wall /wd4820 /wd4242 /wd4244 /wd4267 /wd4127 /wd4711
+WARNINGS=
+
+CC = cl $(WARNINGS) /EHsc /nologo $(BUILD_FLAGS) -D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS
+
+# set the executable name: /Fe foo.exe
+# compile without linking: /c
+
+common.obj: common.c common.h
+	$(CC) /c common.c
+
+zline_api.obj: zline_api.c zline_api.h common.h $(ZSTD_HEADER)
+	$(CC) /c $(ZSTD_INC) zline_api.c
+
+zlines.obj: zlines.c zline_api.h common.h $(ZSTD_HEADER)
+	$(CC) /c $(ZSTD_INC) zlines.c
+
+zlines_test.obj: zlines_test.c zline_api.h common.h $(ZSTD_HEADER)
+	$(CC) /c $(ZSTD_INC) zlines_test.c
+
+$(ZSTD_HEADER):
+	git clone https://github.com/facebook/zstd.git
+
+$(ZSTD_LIB): $(ZSTD_HEADER)
+	-call $(ZSTD_BUILD_CMD)
+
+zlines.exe: zlines.obj zline_api.obj common.obj $(ZSTD_LIB)
+	$(CC) zlines.obj zline_api.obj common.obj $(ZSTD_LIB) $(LINK_OPT)
+
+zlines_test.exe: zlines_test.obj zline_api.obj common.obj $(ZSTD_LIB)
+	$(CC) zlines_test.obj zline_api.obj common.obj $(ZSTD_LIB) $(LINK_OPT)
+
+create_2d_data.exe: create_2d_data.c
+	$(CC) create_2d_data.c
+
+transpose_v0.obj: transpose_v0.c common.h
+	$(CC) /c transpose_v0.c
+
+transpose_v0.exe: transpose_v0.obj common.obj
+	$(CC) transpose_v0.obj common.obj
+
+transpose.obj: transpose.c common.h
+	$(CC) /c transpose.c
+
+transpose.exe: transpose.obj common.obj
+	$(CC) transpose.obj common.obj
+        
+clean:
+	del $(EXECS) *.obj *.exp *.ilk *.lib *.pdb *.idb

@@ -30,17 +30,19 @@ transpose 1999999x21946 = 43891978054 bytes in 1084.340s at 38.6 MiB/s
 
 #include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include <limits.h>
-#include <unistd.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include "common.h"
 
 typedef uint64_t u64;

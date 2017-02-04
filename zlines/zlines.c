@@ -1,13 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <stdint.h>
 #include <assert.h>
-#include <inttypes.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "zstd.h"
 #include "zline_api.h"
 #include "common.h"
@@ -35,7 +40,7 @@ typedef struct {
 int quiet = 0;
 
 int parseArgs(int argc, char **argv, Options *opt);
-void printHelp();
+void printHelp(void);
 int processFile(Options *opt, FILE *input_fp);
 
 int createFile(Options *opt);
@@ -173,7 +178,7 @@ int parseArgs(int argc, char **argv, Options *opt) {
 }
 
 
-void printHelp() {
+void printHelp(void) {
   fprintf(stderr,
           "\n"
           "  zlines create [options] <input text file> <output zlines file>\n"
@@ -384,8 +389,7 @@ int verifyFile(Options *opt) {
     
     extracted_line = ZlineFile_get_line(zf, line_idx, NULL);
     if (strcmp(extracted_line, line)) {
-      printf("Line %" PRIu64 " mismatch.\n  original: %s\n extracted: %s\n",
-             line_idx, line, extracted_line);
+      printf("Line %" PRIu64 " mismatch.\n", line_idx);
       err_count++;
       if (err_count == 10) {
         printf("Too many errors. Exiting.\n");
