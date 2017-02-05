@@ -48,8 +48,14 @@ transpose 1999999x21946 = 43891978054 bytes in 1084.340s at 38.6 MiB/s
 typedef uint64_t u64;
 
 #define STATUS_REPORT_BYTE_INCREMENT (10*1000*1000)
-#define DEFAULT_TILE_SIZE (4 * 1024)
 #define VERBOSE 0
+
+#ifndef DEFAULT_TILE_SIZE
+#define DEFAULT_TILE_SIZE (16*1024)
+#endif
+
+#define USE_CACHE_OBLIVIOUS_TX 1
+#define ROW_MAJOR 0
 
 
 File2d in_file, out_file;
@@ -88,11 +94,20 @@ void transpose
 
 void transposeFiles(File2d *out, File2d *in, int tile_size);
 
-/* transpose the data using a block algorithm. */
-void transposeBlocks
-(Array2d *dest, int dest_row, int dest_col,
- Array2d *src, int src_row, int src_col,
+void transposeFileBlocks
+(File2d *dest, int dest_row, int dest_col,
+ File2d *src, int src_row, int src_col,
  int height, int width);
+
+void transposeFileRecursive
+(File2d *dest, int dest_row, int dest_col,
+ File2d *src, int src_row, int src_col,
+ int height, int width);
+
+/* copy one tile from src to dest, transposing it along the way */
+void transposeFileTile(File2d *dest, int dest_row, int dest_col,
+                       File2d *src, int src_row, int src_col,
+                       int height, int width);
 
 /* simple copy without transposing */
 void copy2d
@@ -205,10 +220,6 @@ int createTempBuffer(Array2d *temp, int tile_size) {
 
 
 void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
-  Array2d in, out;
-  int row, x, y, block_width, block_height;
-  double start_time, elapsed;
-
   in.n_rows = out.n_cols = in.n_cols = out.n_rows = in.row_stride =
     tile_size;
 
@@ -221,56 +232,13 @@ void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
   out.data = (char*)malloc(out.n_rows * out.row_stride);
   assert(in.data && out.data);
 
-  /* read blocks of the input file, transpose them, and write blocks to
-     the output file. */
-  for (x = 0; x < in_file->n_cols; x += in.n_cols) {
-    block_width = MIN(in.n_cols, in_file->n_cols - x);
-
-    for (y = 0; y < in_file->n_rows; y += in.n_rows) {
-      block_height = MIN(in.n_rows, in_file->n_rows - y);
-
-      /* read a block into input buffer */
-      start_time = getSeconds();
-      copy2dFromFile(&in, 0, 0, in_file, y, x, block_height, block_width);
-      elapsed = getSeconds() - start_time;
-      time_reading += elapsed;
-#if VERBOSE > 1
-      printf("read %dx%d block %.3fs\n", block_height, block_width, elapsed);
+#if USE_CACHE_OBLIVIOUS_TX
+  transposeFileRecursive
+#else
+  transposeFileBlocks
 #endif
-
-      /* transpose that block into the output buffer */
-      start_time = getSeconds();
-      transpose(&out, 0, 0, &in, 0, 0, block_height, block_width);
-      elapsed = getSeconds() - start_time;
-      time_transposing += elapsed;
-#if VERBOSE > 1
-      printf("  transpose %.3fs\n", elapsed);
-#endif
-      bytes_done += (u64)block_width * block_height;
-
-      /* if this is the last block of the row, write the newlines as well. */
-      if (y + block_height == out_file->n_cols) {
-        for (row = 0; row < block_width; row++)
-          writeNewline(Array2d_ptr(&out, row, block_height),
-                       out_file->newline_type);
-      
-        block_height += newlineLength(out_file->newline_type);
-      }
-
-      /* write the output buffer to the output file */
-      start_time = getSeconds();
-      copy2dToFile(out_file, x, y, &out, 0, 0, block_width, block_height);
-      elapsed = getSeconds() - start_time;
-      time_writing += elapsed;
-      tiles_done++;
-#if VERBOSE > 1
-      printf("  write %.3fs\n", elapsed);
-#endif
-
-      statusReport(0);
-
-    }
-  }
+    (out_file, 0, 0, in_file, 0, 0,
+     in_file->n_rows, in_file->n_cols);
 
   free(in.data);
   free(out.data);
@@ -282,26 +250,104 @@ void transposeFiles(File2d *out_file, File2d *in_file, int tile_size) {
 }
 
 
-/* height and width are in terms of the src array */
-void transposeBlocks(Array2d *dest, int dest_row, int dest_col,
-                     Array2d *src, int src_row, int src_col,
-                     int height, int width) {
-
-  int x, y, block_width, block_height;
+void transposeFileBlocks(File2d *dest, int dest_row, int dest_col,
+                         File2d *src, int src_row, int src_col,
+                         int height, int width) {
+  int row, col, block_width, block_height;
   
-  for (x = 0; x < width; x += read_block_width) {
-    block_width = MIN(read_block_width, width - x);
+  /* read blocks of the input file, transpose them, and write blocks to
+     the output file. */
+#if ROW_MAJOR
+  for (row = 0; row < height; row += in.n_rows) {
+    block_height = MIN(in.n_rows, src->n_rows - row);
+    for (col = 0; col < width; col += in.n_cols) {
+      block_width = MIN(in.n_cols, src->n_cols - col);
+#else
+  for (col = 0; col < width; col += in.n_cols) {
+    block_width = MIN(in.n_cols, src->n_cols - col);
+    for (row = 0; row < height; row += in.n_rows) {
+      block_height = MIN(in.n_rows, src->n_rows - row);
+#endif
 
-    for (y = 0; y < height; y += read_block_height) {
-      block_height = MIN(read_block_height, height - y);
-
-      transposeTile(dest, dest_row + x, dest_col + y,
-                    src, dest_row + y, src_col + x,
-                    block_height, block_width);
-
+      transposeFileTile(dest, col, row, src, row, col,
+                        block_height, block_width);
+      
     }
   }
+}
 
+
+void transposeFileRecursive(File2d *dest, int dest_row, int dest_col,
+                            File2d *src, int src_row, int src_col,
+                            int height, int width) {
+
+  if (height > tile_size || width > tile_size) {
+    int half;
+    if (height > width) {
+      half = height / 2;
+      transposeFileRecursive(dest, dest_row, dest_col,
+                             src, src_row, src_col,
+                             half, width);
+      transposeFileRecursive(dest, dest_row, dest_col+half,
+                             src, src_row+half, src_col,
+                             height-half, width);
+    } else {
+      half = width / 2;
+      transposeFileRecursive(dest, dest_row, dest_col,
+                             src, src_row, src_col,
+                             height, half);
+      transposeFileRecursive(dest, dest_row+half, dest_col,
+                             src, src_row, src_col+half,
+                             height, width-half);
+    }
+    return;
+  }      
+
+  transposeFileTile(dest, dest_row, dest_col,
+                    src, src_row, src_col, height, width);
+
+}
+
+
+void transposeFileTile(File2d *dest, int dest_row, int dest_col,
+                       File2d *src, int src_row, int src_col,
+                       int height, int width) {
+  double start_time;
+  int row, tmp;
+
+  /*
+  printf("block %d,%d size %d x %d to %d,%d\n", src_row, src_col,
+         height, width, dest_row, dest_col);
+  */
+      
+  /* read a block into input buffer */
+  copy2dFromFile(&in, 0, 0, src, src_row, src_col, height, width);
+
+  /* transpose that block into the output buffer */
+  start_time = getSeconds();
+  transpose(&out, 0, 0, &in, 0, 0, height, width);
+  time_transposing += getSeconds() - start_time;
+
+  bytes_done += (u64)width * height;
+
+  tmp = height; height = width; width = tmp;
+
+  /* if this is the last block of the row, write the newlines as well. */
+  if (dest_col + width == dest->n_cols) {
+    for (row = 0; row < height; row++)
+      writeNewline(Array2d_ptr(&out, row, width), dest->newline_type);
+      
+    width += newlineLength(dest->newline_type);
+  }
+
+  /* write the output buffer to the output file */
+  copy2dToFile(dest, dest_row, dest_col, &out, 0, 0, height, width);
+  tiles_done++;
+#if VERBOSE > 1
+  printf("  write %.3fs\n", elapsed);
+#endif
+
+  statusReport(0);
 }
 
                 
@@ -331,6 +377,7 @@ void copy2dToFile
  int height, int width) {
   int row;
   u64 file_offset;
+  double start_time = getSeconds();
 
   for (row = 0; row < height; row++) {
     file_offset = File2d_offset(dest, dest_row + row, dest_col);
@@ -340,6 +387,8 @@ void copy2dToFile
               width, dest->filename, file_offset);
     }
   }
+
+  time_writing += getSeconds() - start_time;
 }
   
 
@@ -349,6 +398,7 @@ void copy2dFromFile
  int height, int width) {
   int row;
   u64 file_offset;
+  double start_time = getSeconds();
 
   for (row = 0; row < height; row++) {
     file_offset = File2d_offset(src, src_row + row, src_col);
@@ -358,6 +408,8 @@ void copy2dFromFile
               width, src->filename, file_offset);
     }
   }
+
+  time_reading += getSeconds() - start_time;
 }
 
 
@@ -384,9 +436,10 @@ void statusReport(int final) {
 
   pct_done = 100.0 * bytes_done / byte_count;
   
-  printf("\r%.2f%% of %s bytes done, %d of %d tiles"
+  printf("\r%.2f%% of %s bytes done"
          /* ", r=%.3f tx=%.3f w=%.3f"*/
-         , pct_done, commafy(buf1, byte_count), tiles_done, tile_count
+         , pct_done, commafy(buf1, byte_count)
+         /* , tiles_done, tile_count */
          /*, time_reading, time_transposing, time_writing */
          );
          

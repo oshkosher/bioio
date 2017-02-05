@@ -348,14 +348,15 @@ int File2d_open(File2d *f, const char *filename, int for_writing) {
 
     /* guesstimate out the file dimensions */
     first_line_len = File2d_find_byte(f, '\n');
-    if (first_line_len >= INT_MAX) {
-      fprintf(stderr, "First line of %s is %" PRIu64 " bytes, which is longer "
-              "than this tool supports.\n", filename, first_line_len);
-      goto fail;
-    }
 
     if (first_line_len == length || first_line_len == -1) {
       fprintf(stderr, "Invalid input file: no line endings found.\n");
+      goto fail;
+    }
+
+    if (first_line_len >= INT_MAX) {
+      fprintf(stderr, "First line of %s is %" PRIu64 " bytes, which is longer "
+              "than this tool supports.\n", filename, first_line_len);
       goto fail;
     }
 

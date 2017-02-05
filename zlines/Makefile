@@ -46,7 +46,7 @@ disk_speed: disk_speed.c common.o
 	$(CC) $^ $(LIBS) -o $@
 
 
-test: create_2d_data transpose check_transpose test_transpose
+test: create_2d_data transpose transpose_v0 check_transpose test_transpose_v0
 
 test_transpose:
 	./create_2d_data 5678 1234 > foo
@@ -60,6 +60,12 @@ test_transpose:
 	./check_transpose foo bar.3
 	@echo
 	rm foo bar.1 bar.2 bar.3
+
+test_transpose_v0: transpose_v0
+	./create_2d_data 5678 1234 > foo
+	./transpose_v0 foo bar
+	./check_transpose foo bar
+	rm foo bar
 
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:
