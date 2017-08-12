@@ -77,8 +77,10 @@ u64 getFileSize(const char *filename) {
   struct STAT_STRUCT statbuf;
   
    if (STAT_FN(filename, &statbuf)) {
-    fprintf(stderr, "Error getting size of \"%s\": %s\n",
-	    filename, strerror(errno));
+     /*
+     fprintf(stderr, "Error getting size of \"%s\": %s\n",
+             filename, strerror(errno));
+     */
     return 0;
   } else {
     return statbuf.st_size;

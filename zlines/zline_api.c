@@ -280,7 +280,7 @@ static int flushBlock(ZlineFile *zf) {
 int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length) {
 
   if (zf->mode != ZLINE_MODE_CREATE) {
-    fprintf(stderr, "\"%s\" not opened for writing\n", zf->filename);
+    /* fprintf(stderr, "\"%s\" not opened for writing\n", zf->filename); */
     return -1;
   }
   
@@ -551,7 +551,7 @@ ZlineFile *ZlineFile_read(const char *filename) {
   }
   zf->inbuf_capacity = max_c;
   zf->outbuf_capacity = max_dc;
-
+  
   return zf;
 
  fail:
@@ -571,9 +571,9 @@ uint64_t ZlineFile_line_count(ZlineFile *zf) {
 }
 
 /* Returns the length of the given line. */
-uint64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
+int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
   if (line_idx >= zf->line_count)
-    return 0;
+    return -1;
   else
     return zf->lines[line_idx].length;
 }

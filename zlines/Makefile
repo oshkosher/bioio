@@ -1,5 +1,5 @@
 EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
-  check_transpose transpose_mmap
+  check_transpose transpose_mmap libzlines.so
 
 all: $(EXECS)
 
@@ -66,6 +66,14 @@ test_transpose_v0: transpose_v0
 	./transpose_v0 foo bar
 	./check_transpose foo bar
 	rm foo bar
+
+libzlines.so: zline_api.c zline_api.h $(ZSTD_LIB_FILE) common.c common.h
+	$(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/dll/libzstd.dll
+
+libzlines.dll: zline_api.c zline_api.h $(ZSTD_LIB_FILE) common.c common.h
+	$(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/dll/libzstd.dll
+
+# $(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/libzstd.so
 
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:

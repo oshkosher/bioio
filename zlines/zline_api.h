@@ -81,14 +81,16 @@ ZlineFile *ZlineFile_create(const char *filename, int block_size);
 ZlineFile *ZlineFile_read(const char *filename);
 
 /* length is the length of the line, and is optional. If 0, it will be
-   computed using strlen. */
+   computed using strlen.
+   Returns -1 if the file is opened for reading, or 0 on success.
+*/
 int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length);
 
 /* Returns the number of lines in the file. */
 uint64_t ZlineFile_line_count(ZlineFile *zf);
 
-/* Returns the length of the given line. */
-uint64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
+/* Returns the length of the given line, or -1 if there is no such line. */
+int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
 
 /* Returns the length of the longest line. */
 uint64_t ZlineFile_max_line_length(ZlineFile *zf);
