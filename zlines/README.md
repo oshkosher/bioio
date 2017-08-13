@@ -25,7 +25,7 @@ Sample command lines
 
     ./zlines create large_file.txt large_file.zlines
     ./zlines verify large_file.txt large_file.zlines
-    gzip < large_file.txt.gz | ./zlines create - large_file.zlines
+    gunzip < large_file.txt.gz | ./zlines create - large_file.zlines
     
     ./zlines get large_file.zlines 0 100 1000
     
