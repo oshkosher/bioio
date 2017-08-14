@@ -1,5 +1,23 @@
 #!/usr/bin/python
 
+"""
+Python wrapper for zlines API.
+
+Sample usage:
+
+  To create a compressed file:
+  f = zlines.open('stuff.zlines', 'w')
+  f.add('foo')
+  f.add('bar')
+  f.close()
+
+  To read a compressed file:
+  f = zlines.open('stuff.zlines')
+  for line in f:
+    print(line)
+
+"""
+
 import sys, platform
 from ctypes import *
 
@@ -145,6 +163,23 @@ class zline_file:
     Raises IndexError if line_no < 0 or line_no >= len(self).
     """
 
+    # handle slices
+    if isinstance(line_no, slice):
+      result = []
+      start = 0 if line_no.start==None else line_no.start
+      stop  = len(self) if line_no.stop==None else line_no.stop
+      step  = 1 if line_no.step==None else line_no.step
+      for index in range(start, stop, step):
+        try:
+          result.append(self[index])
+        except IndexError:
+          pass
+      return result
+    
+    # implement negative indices
+    if line_no < 0:
+      line_no += len(self)
+    
     llen = self.line_len(line_no)
     if llen == -1: raise IndexError
     

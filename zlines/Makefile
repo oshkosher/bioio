@@ -1,5 +1,16 @@
+ifeq ($(OS),Windows_NT)
+  SHLIB=libzlines.dll
+  ZSTD_SHLIB_ORIG=zstd/lib/dll/libzstd.dll
+  ZSTD_SHLIB=libzstd.dll
+else
+  SHLIB=libzlines.so
+  ZSTD_SHLIB_ORIG=zstd/lib/libzstd.so
+  ZSTD_SHLIB=libzstd.so
+endif
+
+
 EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
-  check_transpose transpose_mmap libzlines.so
+  check_transpose transpose_mmap $(SHLIB)
 
 all: $(EXECS)
 
@@ -70,20 +81,23 @@ test_transpose_v0: transpose_v0
 libzlines.so: zline_api.c zline_api.h common.c common.h libzstd.so
 	$(CC) -fpic -shared -o $@ zline_api.c common.c libzstd.so
 
-libzlines.dll: zline_api.c zline_api.h $(ZSTD_LIB_FILE) common.c common.h
-	$(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/dll/libzstd.dll
-
-# $(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/libzstd.so
+libzlines.dll: zline_api.c zline_api.h common.c common.h libzstd.dll
+	$(CC) -fpic -shared -o $@ zline_api.c common.c libzstd.dll
 
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:
 	git clone https://github.com/facebook/zstd.git
 
+# build ZSTD
 $(ZSTD_LIB_FILE): zstd/lib/zstd.h
 	(cd zstd; make lib)
 
-libzstd.so: $(ZSTD_LIB_FILE)
-	cp zstd/lib/libzstd.so .
+# if the static library is built, the shared one will be too
+$(ZSTD_SHLIB_ORIG): $(ZSTD_LIB_FILE)
+
+# copy the shared library to this directory
+$(ZSTD_SHLIB): $(ZSTD_SHLIB_ORIG)
+	cp $(ZSTD_SHLIB_ORIG) $(ZSTD_SHLIB)
 
 clean:
-	rm -rf $(EXECS) *.o *.stackdump *.dSYM *.so
+	rm -rf $(EXECS) *.o *.stackdump *.dSYM *.so *.dll

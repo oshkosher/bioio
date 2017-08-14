@@ -3,6 +3,9 @@
 *.nex
 *.zst
 *.so
+*.dll
+*.def
+*.lib
 *.pyc
 zstd
 zstd-cygwin
