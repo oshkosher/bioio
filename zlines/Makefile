@@ -67,8 +67,8 @@ test_transpose_v0: transpose_v0
 	./check_transpose foo bar
 	rm foo bar
 
-libzlines.so: zline_api.c zline_api.h $(ZSTD_LIB_FILE) common.c common.h
-	$(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/dll/libzstd.dll
+libzlines.so: zline_api.c zline_api.h common.c common.h libzstd.so
+	$(CC) -fpic -shared -o $@ zline_api.c common.c libzstd.so
 
 libzlines.dll: zline_api.c zline_api.h $(ZSTD_LIB_FILE) common.c common.h
 	$(CC) -fpic -shared -o $@ zline_api.c common.c zstd/lib/dll/libzstd.dll
@@ -82,5 +82,8 @@ zstd/lib/zstd.h:
 $(ZSTD_LIB_FILE): zstd/lib/zstd.h
 	(cd zstd; make lib)
 
+libzstd.so: $(ZSTD_LIB_FILE)
+	cp zstd/lib/libzstd.so .
+
 clean:
-	rm -rf $(EXECS) *.o *.stackdump *.dSYM
+	rm -rf $(EXECS) *.o *.stackdump *.dSYM *.so
