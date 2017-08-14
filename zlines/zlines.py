@@ -163,11 +163,13 @@ class zline_file:
     Raises IndexError if line_no < 0 or line_no >= len(self).
     """
 
+    nlines = len(self)
+    
     # handle slices
     if isinstance(line_no, slice):
       result = []
       start = 0 if line_no.start==None else line_no.start
-      stop  = len(self) if line_no.stop==None else line_no.stop
+      stop  = nlines if (line_no.stop==None or line_no.stop >= nlines) else line_no.stop
       step  = 1 if line_no.step==None else line_no.step
       for index in range(start, stop, step):
         try:
@@ -178,7 +180,7 @@ class zline_file:
     
     # implement negative indices
     if line_no < 0:
-      line_no += len(self)
+      line_no += nlines
     
     llen = self.line_len(line_no)
     if llen == -1: raise IndexError
