@@ -18,11 +18,16 @@ Sample usage:
 
 """
 
-import sys, platform
+import sys, platform, os
 from ctypes import *
 
 if platform.system()[:6] == 'CYGWIN':
   libname = 'libzlines.dll'
+elif platform.system() == 'Darwin':
+  libname = 'libzlines.dylib'
+
+  # make sure libzstd.1.dylib is in DYLD_LIBRARY_PATH
+  
 else:
   libname = 'libzlines.so'
 

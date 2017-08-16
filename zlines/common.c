@@ -244,7 +244,6 @@ uint64_t getMemorySize(void) {
   } else {
     return size;
   }
-}
 
 #else  
   long page_size, page_count;

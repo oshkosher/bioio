@@ -3,9 +3,15 @@ ifeq ($(OS),Windows_NT)
   ZSTD_SHLIB_ORIG=zstd/lib/dll/libzstd.dll
   ZSTD_SHLIB=libzstd.dll
 else
+ifeq "$(shell uname)" "Darwin"
+  SHLIB=libzlines.dylib
+  ZSTD_SHLIB_ORIG=zstd/lib/libzstd.1.dylib
+  ZSTD_SHLIB=libzstd.1.dylib
+else
   SHLIB=libzlines.so
   ZSTD_SHLIB_ORIG=zstd/lib/libzstd.so
   ZSTD_SHLIB=libzstd.so
+endif
 endif
 
 
@@ -78,11 +84,8 @@ test_transpose_v0: transpose_v0
 	./check_transpose foo bar
 	rm foo bar
 
-libzlines.so: zline_api.c zline_api.h common.c common.h libzstd.so
-	$(CC) -fpic -shared -o $@ zline_api.c common.c libzstd.so
-
-libzlines.dll: zline_api.c zline_api.h common.c common.h libzstd.dll
-	$(CC) -fpic -shared -o $@ zline_api.c common.c libzstd.dll
+$(SHLIB): zline_api.c zline_api.h common.c common.h $(ZSTD_SHLIB)
+	$(CC) -fpic -shared -o $@ zline_api.c common.c $(ZSTD_SHLIB)
 
 # acquire and build the Facebook ZSTD compression library
 zstd/lib/zstd.h:
@@ -100,4 +103,4 @@ $(ZSTD_SHLIB): $(ZSTD_SHLIB_ORIG)
 	cp $(ZSTD_SHLIB_ORIG) $(ZSTD_SHLIB)
 
 clean:
-	rm -rf $(EXECS) *.o *.stackdump *.dSYM *.so *.dll
+	rm -rf $(EXECS) *.o *.stackdump *.dSYM *.so *.dll *.dylib
