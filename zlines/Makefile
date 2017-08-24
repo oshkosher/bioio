@@ -14,6 +14,10 @@ else
 endif
 endif
 
+# windows
+# https://stackoverflow.com/questions/2727187/creating-dll-and-lib-files-with-the-vc-command-line
+# cl /LD common.c /Fetest.dll
+# cl /LD /EHsc /nologo  /O2 /MT -D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS /Izstd\lib zline_api.c common.c zstd/build/VS_scripts/bin/Release/x64/libzstd.lib /Felibzlines.dll
 
 EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
   check_transpose transpose_mmap $(SHLIB)

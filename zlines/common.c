@@ -521,7 +521,7 @@ void reportError(const char *filename, int lineNo,
                 FORMAT_MESSAGE_IGNORE_INSERTS,
                 NULL, GetLastError(), 0, (LPTSTR) &message_buffer, 0, NULL);
   printf("%s:%d Error %d on %s: %s\n", filename, lineNo,
-	 GetLastError(), context, message_buffer);
+	 GetLastError(), context, (char*)message_buffer);
   LocalFree(message_buffer);
   if (die) ExitProcess(1);
 }

@@ -6,6 +6,7 @@
 *.dll
 *.def
 *.lib
+*.exp
 *.pyc
 zstd
 zstd-cygwin

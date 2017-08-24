@@ -98,6 +98,8 @@ int parseArgs(int argc, char **argv, Options *opt) {
     opt->mode = PROG_GET;
   } else if (!strcmp(argv[argno], "print")) {
     opt->mode = PROG_PRINT;
+  } else if (!strcmp(argv[argno], "-h")) {
+    printHelp();
   } else {
     fprintf(stderr, "Invalid command: \"%s\"\n", argv[argno]);
     return 1;
@@ -135,8 +137,8 @@ int parseArgs(int argc, char **argv, Options *opt) {
   switch (opt->mode) {
   case PROG_CREATE:
     if (argno+2 != argc) printHelp();
-    opt->input_filename = argv[argno++];
     opt->output_filename = argv[argno++];
+    opt->input_filename = argv[argno++];
     break;
 
   case PROG_DETAILS:
@@ -181,7 +183,7 @@ int parseArgs(int argc, char **argv, Options *opt) {
 void printHelp(void) {
   fprintf(stderr,
           "\n"
-          "  zlines create [options] <input text file> <output zlines file>\n"
+          "  zlines create [options] <output zlines file> <input text file>\n"
           "    if input text file is \"-\", use stdin\n"
           "    options:\n"
           "      -b <block size> : size (in bytes) of compression blocks\n"

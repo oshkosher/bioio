@@ -21,7 +21,7 @@ Sample usage:
 import sys, platform, os
 from ctypes import *
 
-if platform.system()[:6] == 'CYGWIN':
+if platform.system()[:6] == 'CYGWIN' or platform.system()=='Windows':
   libname = 'libzlines.dll'
 elif platform.system() == 'Darwin':
   libname = 'libzlines.dylib'
@@ -71,6 +71,17 @@ ZlineFile_max_line_length.restype = c_ulonglong
 ZlineFile_get_line = zlineslib.ZlineFile_get_line
 ZlineFile_get_line.argtypes = [c_void_p, c_ulonglong, c_char_p]
 ZlineFile_get_line.restype = c_char_p
+
+# get internal number of data blocks
+ZlineFile_get_block_count = zlineslib.ZlineFile_get_block_count
+ZlineFile_get_block_count.argtypes = [c_void_p]
+ZlineFile_get_block_count.restype = c_ulonglong
+
+# get internal data block size, returns (compressed_len, decompressed_len)
+ZlineFile_get_block_size = zlineslib.ZlineFile_get_block_size
+ZlineFile_get_block_size.argtypes = [c_void_p, c_ulonglong,
+                                     POINTER(c_ulonglong), POINTER(c_ulonglong)]
+ZlineFile_get_block_size.restype = c_int
 
 # close a file (from either ZlineFile_create or ZlineFile_read)
 ZlineFile_close = zlineslib.ZlineFile_close
@@ -197,6 +208,24 @@ class zline_file:
       return line.decode(self._encoding)
     else:
       return line
+
+  def block_count(self):
+    """ Returns the number of compressed data blocks in the file. """
+    return int(ZlineFile_get_block_count(self._file))
+
+  
+  def block_size(self, block_no):
+    """
+    Returns the (compressed, decompressed) size of the given data block.
+    Raises IndexError if block_no is invalid.
+    """    
+
+    cs = c_ulonglong()
+    ds = c_ulonglong()
+    if ZlineFile_get_block_size(self._file, block_no, byref(cs), byref(ds)) < 0:
+      raise IndexError
+
+    return (int(cs.value), int(ds.value))
 
 
 def open(filename, mode='r', encoding='default'):

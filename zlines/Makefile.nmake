@@ -8,7 +8,7 @@ EXECS = create_2d_data.exe zlines.exe zlines_test.exe transpose.exe \
   transpose_v0.exe
   
 
-all: $(EXECS)
+all: $(EXECS) libzlines.dll
 
 # zstd\build\VS_scripts\build.VS2012.cmd
 # zstd\build\VS_scripts\bin/Release/x64/zstd.exe
@@ -31,10 +31,14 @@ LINK_OPT=/link /NODEFAULTLIB:library /LTCG
 ZSTD_BUILD_CMD=zstd\build\VS_scripts\build.generic.cmd VS2012 x64 $(BUILD) v110
 !ENDIF
 
+!IF "$(VISUALSTUDIOVERSION)"=="14.0"
+ZSTD_BUILD_CMD=zstd\build\VS_scripts\build.generic.cmd VS2015 x64 $(BUILD) v140
+!ENDIF
+
 ZSTD_INC=/Izstd\lib
 ZSTD_HEADER=zstd\lib\zstd.h
 ZSTD_LIB=zstd\build\VS_scripts\bin\$(BUILD)\x64\libzstd_static.lib
-
+ZSTD_DLL=zstd\build\VS_scripts\bin\Release\x64\libzstd.dll
 
 # WARNINGS=/Wall /wd4820 /wd4242 /wd4244 /wd4267 /wd4127 /wd4711
 WARNINGS=
@@ -82,6 +86,12 @@ transpose.obj: transpose.c common.h
 
 transpose.exe: transpose.obj common.obj
 	$(CC) transpose.obj common.obj
-        
+
+libzstd.dll: $(ZSTD_LIB)
+	copy $(ZSTD_DLL) .
+
+libzlines.dll: zline_api.c zline_api.h common.c common.h libzstd.dll
+	cl /LD /EHsc /nologo  /O2 /MT -D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS /Izstd\lib zline_api.c common.c zstd/build/VS_scripts/bin/Release/x64/libzstd.lib /Felibzlines.dll
+
 clean:
-	del $(EXECS) *.obj *.exp *.ilk *.lib *.pdb *.idb
+	del $(EXECS) *.obj *.exp *.ilk *.lib *.pdb *.idb *.dll
