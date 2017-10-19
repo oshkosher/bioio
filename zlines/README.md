@@ -15,7 +15,9 @@ To extract character data from a compressed NEXUS file and put it in a zlines fi
 
     gunzip < bigfile.nex.gz 2>/dev/null | ../parse_nexus/nexus_chars - | ./zlines create bigfile.chars.zlines -
 
-C interface - see zlines_test.c for sample usage and zline_api.h for a description of each function
+C interface
+ - See zlines_test.c for sample usage
+ - See zline_api.h for a description of each function
 
 Python interface
  - Run "pysetup" to see the commands needed to add this module to your
