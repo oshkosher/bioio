@@ -148,8 +148,8 @@ int parseArgs(int argc, char **argv, Options *opt) {
 
   case PROG_VERIFY:
     if (argno+2 != argc) printHelp();
-    opt->input_filename = argv[argno++];
     opt->output_filename = argv[argno++];
+    opt->input_filename = argv[argno++];
     break;
 
   case PROG_PRINT:
@@ -195,7 +195,7 @@ void printHelp(void) {
           "  zlines details <zlines file>\n"
           "    prints internal details about the data encoded in the file\n"
           "\n"
-          "  zlines verify <input text file> <zlines file>\n"
+          "  zlines verify <zlines file> <text file>\n"
           "    tests if the zlines file matches the given text file\n"
           "\n"
           "  zlines get <zlines file> [line#...]\n"

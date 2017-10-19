@@ -1,16 +1,19 @@
 ifeq ($(OS),Windows_NT)
+  # Cygwin
   SHLIB=libzlines.dll
   ZSTD_SHLIB_ORIG=zstd/lib/dll/libzstd.dll
   ZSTD_SHLIB=libzstd.dll
 else
 ifeq "$(shell uname)" "Darwin"
+  # MacOS
   SHLIB=libzlines.dylib
   ZSTD_SHLIB_ORIG=zstd/lib/libzstd.1.dylib
   ZSTD_SHLIB=libzstd.1.dylib
 else
+  # Linux
   SHLIB=libzlines.so
-  ZSTD_SHLIB_ORIG=zstd/lib/libzstd.so
-  ZSTD_SHLIB=libzstd.so
+  ZSTD_SHLIB_ORIG=zstd/lib/libzstd.so.1
+  ZSTD_SHLIB=libzstd.so.1
 endif
 endif
 
@@ -30,8 +33,8 @@ ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
-#OPT=-g
-OPT=-O3
+OPT=-g
+# OPT=-O3
 CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
@@ -107,4 +110,6 @@ $(ZSTD_SHLIB): $(ZSTD_SHLIB_ORIG)
 	cp $(ZSTD_SHLIB_ORIG) $(ZSTD_SHLIB)
 
 clean:
-	rm -rf $(EXECS) *.o *.stackdump *.dSYM *.so *.dll *.dylib
+	rm -rf $(EXECS) *.o *.obj *.exp *.lib *.stackdump *.dSYM *.so *.so.1 \
+	  *.dll *.dylib __pycache__
+

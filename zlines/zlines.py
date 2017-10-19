@@ -1,20 +1,47 @@
 #!/usr/bin/python
 
-"""
-Python wrapper for zlines API.
+"""Python wrapper for zlines API.
 
 Sample usage:
 
-  To create a compressed file:
+  First run the "pysetup" script to see what commands are needed to
+  access this module from python. Run the output that it prints.
+
+  Creating a compressed file:
+
+  import zlines
   f = zlines.open('stuff.zlines', 'w')
   f.add('foo')
   f.add('bar')
   f.close()
 
-  To read a compressed file:
+  Reading a compressed file:
+
+  import zlines
   f = zlines.open('stuff.zlines')
+  print("%d lines of text" % len(f))
+  print("First line: " + f[0])
+  print("Last line: " + f[-1])
   for line in f:
     print(line)
+
+When the module is imported, it will look for three files:
+ - zlines.py (this file)
+ - the shared library for zlines
+ - the shared library for zstd
+
+This file must be in the current directory or in a directory listed in
+the PYTHONPATH environment variable.  The shared libraries must be in
+a directory listed in the shared library environment variable, which
+is system-dependent.
+
+ - Windows/Cygwin: PATH variable (files are libzlines.dll and libzstd.dll)
+ - Linux: LD_LIBRARY_PATH variable (files are libzlines.so and libzstd.so.1)
+ - MacOS: DYLD_LIBRARY_PATH variable (files are libzlines.dylib and libzstd.1.dylib)
+
+The "pysetup" script is a simple attempt at providing commands to set
+this up for the user on different systems.
+
 
 """
 
