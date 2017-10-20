@@ -33,8 +33,8 @@ ZSTD_LIB_FILE=zstd/lib/libzstd.a
 
 ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
-OPT=-g
-# OPT=-O3
+# OPT=-g
+OPT=-O3
 CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
 CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
