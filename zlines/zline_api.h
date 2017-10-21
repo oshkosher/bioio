@@ -1,3 +1,15 @@
+/*
+  zlines
+
+  A tool for storing a large number of text lines in a compressed file
+  and an API for accessing those lines efficiently.
+
+
+  https://github.com/oshkosher/bioio/tree/master/zlines
+
+  Ed Karrels, ed.karrels@gmail.com, January 2017
+*/
+
 #ifndef __ZLINE_API_H__
 #define __ZLINE_API_H__
 
@@ -5,7 +17,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-typedef struct ZlineIndexBlock{
+typedef struct ZlineIndexBlock {
   /* Offset, from the beginning of the file, where the compressed form
      of this block can be found. */
   uint64_t offset;

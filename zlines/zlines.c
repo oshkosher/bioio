@@ -1,3 +1,16 @@
+/*
+  zlines
+
+  A tool for storing a large number of text lines in a compressed file
+  and an API for accessing those lines efficiently.
+
+  This file is the command line tool for creating and managing zlines files.
+
+  https://github.com/oshkosher/bioio/tree/master/zlines
+
+  Ed Karrels, ed.karrels@gmail.com, January 2017
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

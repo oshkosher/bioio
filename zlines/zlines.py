@@ -1,6 +1,12 @@
 #!/usr/bin/python
 
-"""Python wrapper for zlines API.
+"""
+Python wrapper for zlines API.
+
+https://github.com/oshkosher/bioio/tree/master/zlines
+
+Ed Karrels, ed.karrels@gmail.com, January 2017
+
 
 Sample usage:
 

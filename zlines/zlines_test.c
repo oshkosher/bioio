@@ -1,7 +1,10 @@
 /*
   Performance test - scan through every line of text in a zlines file.
+
+  https://github.com/oshkosher/bioio/tree/master/zlines
+
+  Ed Karrels, ed.karrels@gmail.com, January 2017
 */
-  
 
 #include <stdio.h>
 #include <stdlib.h>
