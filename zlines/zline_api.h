@@ -70,28 +70,38 @@ typedef struct {
   uint64_t lines_capacity;   /* allocated size of the lines array */
 } ZlineFile;
 
+
+#ifdef __CYGWIN__
+#define ZLINE_EXPORT __attribute__ ((visibility ("default")))
+#elif defined(_WIN32)
+#define ZLINE_EXPORT __declspec(dllexport)
+#else
+#define ZLINE_EXPORT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Create a new zlines file. */
-ZlineFile *ZlineFile_create(const char *filename, int block_size);
+ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *filename, int block_size);
 
 /* Open an existing zlines file for reading. */
-ZlineFile *ZlineFile_read(const char *filename);
+ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename);
 
 /* length is the length of the line, and is optional. If 0, it will be
-   computed using strlen. */
-int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length);
+   computed using strlen.
+   Returns -1 if the file is opened for reading, or 0 on success.
+*/
+ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length);
 
-/* Returns the number of lines in the file. */
-uint64_t ZlineFile_line_count(ZlineFile *zf);
+ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf);
 
-/* Returns the length of the given line. */
-uint64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
+/* Returns the length of the given line, or -1 if there is no such line. */
+ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
 
 /* Returns the length of the longest line. */
-uint64_t ZlineFile_max_line_length(ZlineFile *zf);
+ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf);
 
 /* Reads a line from the file. If buf is NULL, memory to store the line will
    be allocated with malloc. The caller must deallocate the memory with free().
@@ -104,9 +114,21 @@ uint64_t ZlineFile_max_line_length(ZlineFile *zf);
    If line_idx is >= ZlineFile_line_count(zf), or a memory allocation failed,
    or an error was encountered reading the file, this will return NULL.
 */
-char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf);
+ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf);
 
-void ZlineFile_close(ZlineFile *zf);
+/* Returns the number of compressed blocks in the file.
+   If the file is open in write mode, this may under-report the block
+   count by one. */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_count(ZlineFile *zf);
+
+/* Fetches the compressed and decompressed size of the given block.
+   If block_idx is invalid, returns -1.
+   Returns 0 on success. */
+ZLINE_EXPORT int ZlineFile_get_block_size(ZlineFile *zf, uint64_t block_idx,
+                                          uint64_t *compressed_length,
+                                          uint64_t *decompressed_length);
+
+ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf);
 
  
 #ifdef __cplusplus

@@ -2,6 +2,12 @@
 *.bz2
 *.nex
 *.zst
+*.so
+*.dll
+*.def
+*.lib
+*.exp
+*.pyc
 zstd
 zstd-cygwin
 zstd-ubuntu

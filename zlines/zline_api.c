@@ -40,7 +40,8 @@ static void linesInsureCapacity(ZlineFile *zf, u64 capacity);
 static int getBlock(ZlineFile *zf, u64 block_idx);
 
 
-ZlineFile *ZlineFile_create(const char *output_filename, int block_size) {
+ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *output_filename,
+                                         int block_size) {
   ZlineFile *zf = (ZlineFile*) calloc(1, sizeof(ZlineFile));
   if (!zf) {
     fprintf(stderr, "Out of memory\n");
@@ -277,10 +278,11 @@ static int flushBlock(ZlineFile *zf) {
   
 /* length is the length of the line, and is optional. If 0, it will be
    computed using strlen. */
-int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length) {
+ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line,
+                                    uint64_t length) {
 
   if (zf->mode != ZLINE_MODE_CREATE) {
-    fprintf(stderr, "\"%s\" not opened for writing\n", zf->filename);
+    /* fprintf(stderr, "\"%s\" not opened for writing\n", zf->filename); */
     return -1;
   }
   
@@ -308,7 +310,7 @@ int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length) {
 }
 
   
-void ZlineFile_close(ZlineFile *zf) {
+ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf) {
   size_t write_len;
   int pad_size;
   char pad_buf[7] = {0};
@@ -449,7 +451,7 @@ static void linesInsureCapacity(ZlineFile *zf, u64 capacity) {
 
 
 /* Open an existing zlines file for reading. */
-ZlineFile *ZlineFile_read(const char *filename) {
+ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
   ZlineFile *zf = (ZlineFile*) calloc(1, sizeof(ZlineFile));
   size_t read_len;
   u64 max_c = 0, max_dc = 0, file_size;
@@ -551,7 +553,7 @@ ZlineFile *ZlineFile_read(const char *filename) {
   }
   zf->inbuf_capacity = max_c;
   zf->outbuf_capacity = max_dc;
-
+  
   return zf;
 
  fail:
@@ -566,20 +568,20 @@ ZlineFile *ZlineFile_read(const char *filename) {
 
 
 /* Returns the number of lines in the file. */
-uint64_t ZlineFile_line_count(ZlineFile *zf) {
+ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf) {
   return zf->line_count;
 }
 
 /* Returns the length of the given line. */
-uint64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
+ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
   if (line_idx >= zf->line_count)
-    return 0;
+    return -1;
   else
     return zf->lines[line_idx].length;
 }
 
 /* Returns the length of the longest line. */
-uint64_t ZlineFile_max_line_length(ZlineFile *zf) {
+ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf) {
   u64 i, max_len = 0;
   for (i=0; i < zf->line_count; i++)
     max_len = MAX(max_len, zf->lines[i].length);
@@ -640,7 +642,8 @@ static int getBlock(ZlineFile *zf, u64 block_idx) {
    If line_idx is >= ZlineFile_line_count(zf), or a memory allocation failed,
    or an error was encountered reading the file, this will return NULL.
 */
-char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf) {
+ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
+                                      char *buf) {
   ZlineIndexLine *line;
   u64 file_pos = 0;
   char *result = NULL;
@@ -702,4 +705,30 @@ char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx, char *buf) {
   return result;
 }
               
+
+/* Returns the number of compressed blocks in the file.
+   If the file is open in write mode, this may under-report the block
+   count by one. */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_count(ZlineFile *zf) {
+  assert(zf);
+  return zf->block_count;
+}
+
+
+/* Fetches the compressed and decompressed size of the given block.
+   If block_idx is invalid, returns -1.
+   Returns 0 on success. */
+ZLINE_EXPORT int ZlineFile_get_block_size(ZlineFile *zf, uint64_t block_idx,
+                                          uint64_t *compressed_length,
+                                          uint64_t *decompressed_length) {
+  assert(zf);
+
+  if (block_idx >= zf->block_count) return -1;
+  ZlineIndexBlock *block = zf->blocks + block_idx;
+
+  *compressed_length = block->compressed_length;
+  *decompressed_length = block->decompressed_length;
+
+  return 0;
+}
 

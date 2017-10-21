@@ -1,0 +1,23 @@
+#!/bin/bash
+
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+uname=`uname`
+
+# common
+echo export PYTHONPATH="\"\$PYTHONPATH\":\"$DIR\""
+
+if [ x"$OS" = x"Windows_NT" ]; then
+  # cygwin
+  echo export PATH="\"\$PATH\":\"$DIR\""
+else
+  # MacOS
+  if [ x"$uname" = x"Darwin" ]; then
+    echo export DYLD_LIBRARY_PATH="\"\$DYLD_LIBRARY_PATH\":\"$DIR\""
+  else
+    #Linux
+    echo export LD_LIBRARY_PATH="\"\$LD_LIBRARY_PATH\":\"$DIR\""
+  fi
+fi
+
+    

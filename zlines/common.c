@@ -77,8 +77,10 @@ u64 getFileSize(const char *filename) {
   struct STAT_STRUCT statbuf;
   
    if (STAT_FN(filename, &statbuf)) {
-    fprintf(stderr, "Error getting size of \"%s\": %s\n",
-	    filename, strerror(errno));
+     /*
+     fprintf(stderr, "Error getting size of \"%s\": %s\n",
+             filename, strerror(errno));
+     */
     return 0;
   } else {
     return statbuf.st_size;
@@ -242,7 +244,6 @@ uint64_t getMemorySize(void) {
   } else {
     return size;
   }
-}
 
 #else  
   long page_size, page_count;
@@ -520,7 +521,7 @@ void reportError(const char *filename, int lineNo,
                 FORMAT_MESSAGE_IGNORE_INSERTS,
                 NULL, GetLastError(), 0, (LPTSTR) &message_buffer, 0, NULL);
   printf("%s:%d Error %d on %s: %s\n", filename, lineNo,
-	 GetLastError(), context, message_buffer);
+	 GetLastError(), context, (char*)message_buffer);
   LocalFree(message_buffer);
   if (die) ExitProcess(1);
 }

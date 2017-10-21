@@ -5,12 +5,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "zline_api.h"
 
 
 int main(int argc, char **argv) {
   ZlineFile *zf;
-  long i, count;
+  long i, count, bytes = 0;
   char *line = NULL;
 
   if (argc != 2) {
@@ -34,12 +35,13 @@ int main(int argc, char **argv) {
   /* extract each line (but don't do anything with it) */
   for (i = 0; i < count; i++) {
     ZlineFile_get_line(zf, i, line);
+    bytes += strlen(line);
   }
 
   free(line);
   ZlineFile_close(zf);
 
-  printf("%ld lines read.\n", count);
+  printf("%ld lines read, %ld bytes.\n", count, bytes);
 
   return 0;
 }
