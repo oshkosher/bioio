@@ -207,9 +207,8 @@ static void addLineInternal(ZlineFile *zf, u64 block_idx, u64 offset,
                             u64 length) {
   ZlineIndexLine *line;
   
-  linesInsureCapacity(zf, zf->line_count + 1);
-  line = zf->lines + zf->line_count;
-  line->block_idx = block_idx;
+  linesInsureCapacity(zf, zf->inbuf_count + 1);
+  line = zf->lines + zf->inbuf_count;
   line->offset = offset;
   line->length = length;
 
@@ -218,14 +217,16 @@ static void addLineInternal(ZlineFile *zf, u64 block_idx, u64 offset,
          (int)zf->line_count, (int)block_idx, (int)line->offset,
          (int)line->length);
   */
-  
+
+  zf->inbuf_count++;
   zf->line_count++;
 }
 
 
 static int flushBlock(ZlineFile *zf) {
   ZlineIndexBlock *block = zf->blocks + zf->block_count;
-  size_t write_len, compressed_len;
+  // size_t write_len, compressed_len;
+  int64_t write_len, compressed_len
   u64 next_block_start;
 
   assert(block->offset > 0);
@@ -235,7 +236,18 @@ static int flushBlock(ZlineFile *zf) {
   
   block->decompressed_length = zf->inbuf_size;
 
-  /* compress the block */
+  /* compress the block, starting with the line index */
+  compressed_len = compressToFile(zf->fp, zf->lines,
+                             sizeof(ZlineIndexLine) * inbuf_count);
+  if (write_len < 0) return 1;
+
+  write_len = compressToFile(zf->fp, zf->inbuf, zf->inbuf_size);
+  if (write_len < 0) return 1;
+
+  compressed_len += write_len;
+  
+  
+#if 0
   compressed_len = ZSTD_compress
     (zf->outbuf, zf->outbuf_capacity, zf->inbuf, zf->inbuf_size,
      ZSTD_COMPRESSION_LEVEL);
@@ -247,6 +259,7 @@ static int flushBlock(ZlineFile *zf) {
             zf->inbuf_size, zf->outbuf_capacity, (u64) compressed_len);
     return 1;
   }
+#endif
   
   block->compressed_length = compressed_len;
   assert(block->compressed_length > 0);
@@ -263,7 +276,7 @@ static int flushBlock(ZlineFile *zf) {
   /* assert(ftell(zf->fp) == block->offset); */
 
   /* write the compressed data to the file */
-  write_len = fwrite(zf->outbuf, 1, zf->outbuf_size, zf->fp);
+  // write_len = fwrite(zf->outbuf, 1, zf->outbuf_size, zf->fp);
 
   /*
   printf("block %d at %d, len %d\n", (int)zf->block_count,
@@ -275,7 +288,10 @@ static int flushBlock(ZlineFile *zf) {
   zf->block_count++;
   zf->blocks[zf->block_count].offset = next_block_start;
   zf->inbuf_size = 0;
+  zf->inbuf_count = 0;
+  zf->blocks_first_line[zf->block_count-1] = zf->line_count;
 
+  /*
   if (write_len != (size_t)zf->outbuf_size) {
     fprintf(stderr, "Failed to write %d bytes to \"%s\" at offset "
             "%" PRIu64 "\n", zf->outbuf_size, zf->filename,
@@ -284,21 +300,23 @@ static int flushBlock(ZlineFile *zf) {
   } else {
     return 0;
   }
+  */
+  return 0;
 }
             
   
   
-/* length is the length of the line, and is optional. If 0, it will be
-   computed using strlen. */
+/* length is the length of the line, and is optional. If less than 0,
+   it will be computed using strlen. */
 ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line,
-                                    uint64_t length) {
+                                    int64_t length) {
 
   if (zf->mode != ZLINE_MODE_CREATE) {
     /* fprintf(stderr, "\"%s\" not opened for writing\n", zf->filename); */
     return -1;
   }
   
-  if (length == 0) length = strlen(line);
+  if (length < 0) length = strlen(line);
 
   /* the line doesn't fit in the current block, flush the current block */
   if (zf->inbuf_size + length > (u64)zf->inbuf_capacity) {
@@ -308,6 +326,7 @@ ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line,
   /* add an entry to the line index */
   addLineInternal(zf, zf->block_count, zf->inbuf_size, length);
 
+  /* Split really long lines across multiple blocks. */
   while (length) {
     uint64_t bite = MIN(length, (u64)(zf->inbuf_capacity - zf->inbuf_size));
     memcpy(zf->inbuf + zf->inbuf_size, line, bite);

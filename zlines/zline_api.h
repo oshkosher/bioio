@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+
+/* One block of lines */
 typedef struct ZlineIndexBlock {
   /* Offset, from the beginning of the file, where the compressed form
      of this block can be found. */
@@ -30,10 +32,14 @@ typedef struct ZlineIndexBlock {
 } ZlineIndexBlock;
 
 
-typedef struct ZlineIndexLine {
-  /* index of the block containing this line */
-  uint64_t block_idx;
+/* On disk and in memory, there will be an array of line numbers, one
+   per block, for quickly looking up the block in which a given line
+   is stored.
+*/
 
+
+/* One line of data. */
+typedef struct ZlineIndexLine {
   /* offset, in the decompressed block, where this line can be found. */
   uint64_t offset;
 
@@ -60,6 +66,9 @@ typedef struct {
   char *inbuf;
   int inbuf_size, inbuf_capacity;
 
+  // number of lines in inbuf
+  int inbuf_count;
+
   /* buffer holding compressed data before writing it to the file */
   char *outbuf;
   int outbuf_size, outbuf_capacity;
@@ -75,9 +84,18 @@ typedef struct {
 
   /* array of blocks */
   ZlineIndexBlock *blocks;
-  uint64_t blocks_capacity;  /* allocated size of blocks array */
+  
+  /* Index of the first line in each block. This contains block_count-1
+     entries, because the first block always starts with line 0.
+     This is sorted, so either a linear search can be used.
+  */
+  uint64_t *blocks_first_line;
 
-  /* array of lines */
+  /* Allocated size of blocks array, and one more than the allocated size
+     of the block_first_line array (reallocate them together). */  
+  uint64_t blocks_capacity;
+
+  /* array of lines in the current block */
   ZlineIndexLine *lines;
   uint64_t lines_capacity;   /* allocated size of the lines array */
 } ZlineFile;
@@ -101,11 +119,12 @@ ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *filename, int block_size);
 /* Open an existing zlines file for reading. */
 ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename);
 
-/* length is the length of the line, and is optional. If 0, it will be
-   computed using strlen.
+/* length is the length of the line, and is optional. If less than 0,
+   it will be computed using strlen.
+
    Returns -1 if the file is opened for reading, or 0 on success.
 */
-ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line, uint64_t length);
+ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line, int64_t length);
 
 ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf);
 
