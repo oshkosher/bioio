@@ -29,6 +29,10 @@ LINK_OPT=/link /NODEFAULTLIB:library /LTCG
 
 !IF "$(VISUALSTUDIOVERSION)"=="11.0"
 ZSTD_BUILD_CMD=zstd\build\VS_scripts\build.generic.cmd VS2012 x64 $(BUILD) v110
+!ELSEIF "$(VISUALSTUDIOVERSION)"=="12.0"
+ZSTD_BUILD_CMD=zstd\build\VS_scripts\build.generic.cmd VS2013 x64 $(BUILD) v120
+!ELSE
+echo Unrecognized version of Visual Studio: $(VISUALSTUDIOVERSION)
 !ENDIF
 
 ZSTD_INC=/Izstd\lib
