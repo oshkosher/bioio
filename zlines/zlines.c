@@ -313,17 +313,16 @@ int createFile(Options *opt) {
   zf = ZlineFile_read(opt->output_filename);
   assert(zf);
 
-  /* use internal data structure to compute the compressed size of
-     the data */
-  for (idx = 0; idx < zf->block_count; idx++)
-    total_zblock_size += zf->blocks[idx].compressed_length;
+  /* compute the compressed size of the data */
+  for (idx = 0; idx < zf->blocks_size; idx++)
+    total_zblock_size += ZlineFile_get_block_size_compressed(zf, idx);
 
   if (!quiet) {
     printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
            "compressed to %" PRIu64 " blocks, %s"
            " bytes with %s bytes overhead\n", 
            min_line_len, max_line_len,
-           zf->block_count, commafy(buf1, total_zblock_size),
+           zf->blocks_size, commafy(buf1, total_zblock_size),
            commafy(buf2, output_file_size - total_zblock_size));
   }
   
@@ -346,20 +345,22 @@ int fileDetails(Options *opt) {
   printf("data starts at offset %" PRIu64 "\n", zf->data_offset);
   printf("index starts at offset %" PRIu64 "\n", zf->index_offset);
   
-  printf("%" PRIu64 " compressed blocks\n", zf->block_count);
-  for (i=0; i < zf->block_count; i++) {
-    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %" PRIu64
-           ", decompressed len %" PRIu64 "\n",
-           i, zf->blocks[i].offset, zf->blocks[i].compressed_length,
-           zf->blocks[i].decompressed_length);
+  printf("%" PRIu64 " compressed blocks\n", zf->blocks_size);
+  for (i=0; i < zf->blocks_size; i++) {
+    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %d, "
+           "decompressed len %d\n",
+           i, zf->blocks[i].offset, ZlineFile_get_block_size_compressed(zf, i),
+           ZlineFile_get_block_size_original(zf, i));
   }
 
+  /*
   printf("%" PRIu64 " lines\n", zf->line_count);
   for (i=0; i < zf->line_count; i++) {
     printf("line %" PRIu64 ": in block %" PRIu64 ", offset %" PRIu64 ", len %" PRIu64
            "\n",
            i, zf->lines[i].block_idx, zf->lines[i].offset, zf->lines[i].length);
-  }    
+  } 
+  */   
 
   ZlineFile_close(zf);
   
