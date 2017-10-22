@@ -56,11 +56,88 @@ int test_add_one() {
 
   return 0;
 }
+
+
+void test_add_some() {
+  ZlineFile *z = ZlineFile_create(FILENAME, 0);
+  char buf[100];
+
+  assert(0 == ZlineFile_max_line_length(z));
+  ZlineFile_add_line(z, "foo", -1);
+  assert(3 == ZlineFile_max_line_length(z));
+  ZlineFile_add_line(z, "bar", -1);
+  assert(3 == ZlineFile_max_line_length(z));
+  ZlineFile_add_line(z, "", 0);
+  assert(3 == ZlineFile_max_line_length(z));
+  ZlineFile_add_line(z, "gonzo", -1);
+  assert(5 == ZlineFile_max_line_length(z));
+
+  assert(4 == ZlineFile_line_count(z));
+  assert(3 == ZlineFile_line_length(z, 0));
+  assert(3 == ZlineFile_line_length(z, 1));
+  assert(0 == ZlineFile_line_length(z, 2));
+  assert(5 == ZlineFile_line_length(z, 3));
+
+  assert(!strcmp("foo", ZlineFile_get_line(z, 0, buf)));
+  assert(!strcmp("bar", ZlineFile_get_line(z, 1, buf)));
+  assert(!strcmp("", ZlineFile_get_line(z, 2, buf)));
+  assert(!strcmp("gonzo", ZlineFile_get_line(z, 3, buf)));
+
+  ZlineFile_close(z);
+
+  z = ZlineFile_read(FILENAME);
+  assert(4 == ZlineFile_line_count(z));
+  assert(5 == ZlineFile_max_line_length(z));
+  assert(3 == ZlineFile_line_length(z, 0));
+  assert(3 == ZlineFile_line_length(z, 1));
+  assert(0 == ZlineFile_line_length(z, 2));
+  assert(5 == ZlineFile_line_length(z, 3));
+
+  assert(!strcmp("foo", ZlineFile_get_line(z, 0, buf)));
+  assert(!strcmp("bar", ZlineFile_get_line(z, 1, buf)));
+  assert(!strcmp("", ZlineFile_get_line(z, 2, buf)));
+  assert(!strcmp("gonzo", ZlineFile_get_line(z, 3, buf)));
+
+  ZlineFile_close(z);
+}
+
+
+void test_blocks() {
+  ZlineFile *z = ZlineFile_create(FILENAME, 100);
+  char buf[100];
+
+  ZlineFile_add_line(z, "this is 80 characters.......................................................done", -1);
+  ZlineFile_add_line(z, "and here's 20*******", -1);
+
+  ZlineFile_add_line(z, "one more", -1);
+
+  assert(80 == ZlineFile_max_line_length(z));
+
+  assert(!strcmp("one more", ZlineFile_get_line(z, 2, buf)));
+  assert(!strcmp("and here's 20*******", ZlineFile_get_line(z, 1, buf)));
+  assert(!strcmp("this is 80 characters.......................................................done", ZlineFile_get_line(z, 0, buf)));
+
+  ZlineFile_close(z);
+
+  z = ZlineFile_read(FILENAME);
+  assert(80 == ZlineFile_max_line_length(z));
+
+  assert(!strcmp("one more", ZlineFile_get_line(z, 2, buf)));
+  assert(!strcmp("and here's 20*******", ZlineFile_get_line(z, 1, buf)));
+  assert(!strcmp("this is 80 characters.......................................................done", ZlineFile_get_line(z, 0, buf)));
+  assert(!strcmp("one more", ZlineFile_get_line(z, 2, buf)));
+
+  ZlineFile_close(z);
+}
   
 
 int main() {
 
   test_add_one();
+  test_add_some();
+  test_blocks();
+  remove(FILENAME);
+
   printf("ok\n");
 
   return 0;

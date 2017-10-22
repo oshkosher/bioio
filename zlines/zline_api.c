@@ -119,7 +119,7 @@ ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *output_filename,
   zf->write_block->idx = 0;
 
   /* open the output file */
-  zf->fp = fopen(output_filename, "wb");
+  zf->fp = fopen(output_filename, "w+b");
   if (!zf->fp) goto fail;
 
   if (writeHeader(zf)) goto fail;
@@ -128,6 +128,10 @@ ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *output_filename,
   linesInsureCapacity(zf->write_block, INITIAL_LINE_CAPACITY);
 
   zf->blocks_size = 1;
+  zf->blocks[0].offset = 0;
+  zf->blocks[0].decompressed_length = 0;
+  zf->blocks[0].compressed_length_x = 0;
+
   zf->write_block->offset = HEADER_SIZE;
 
   zf->compress_stream = ZSTD_createCStream();
@@ -357,6 +361,7 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
     write_len = fwrite(compressed_line_index, 1, compressed_line_index_len,
                        zf->fp);
     assert(write_len == compressed_line_index_len);
+    free(compressed_line_index);
     
     line_index_len = (sizeof compressed_line_index_len) +
       compressed_line_index_len;
@@ -881,9 +886,11 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
   
   if (zf->mode == ZLINE_MODE_CREATE) {
     *line = lineInBlock(zf->write_block, line_idx);
-    if (*line)
+    if (*line) {
       *block = zf->write_block;
-    return 0;
+      *block_idx = zf->write_block->idx;
+      return 0;
+    }
   }
   
   *line = lineInBlock(zf->read_block, line_idx);
@@ -896,6 +903,7 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
   *block_idx = getLineBlock(zf, line_idx);
   readBlock(zf, *block_idx);
   *line = lineInBlock(zf->read_block, line_idx);
+  assert(*line);
   *block = zf->read_block;
 
   return 0;
@@ -904,6 +912,7 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
 
 static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx) {
   if (block &&
+      block->idx >= 0 &&
       line_idx >= block->first_line &&
       line_idx < block->first_line + block->lines_size)
     return block->lines + (line_idx - block->first_line);
@@ -963,7 +972,8 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
 
   b = zf->read_block;
   b->idx = block_idx;
-  
+  b->first_line = (block_idx == 0) ? 0 : zf->block_starts[block_idx-1];
+
   if (fseek(zf->fp, block->offset, SEEK_SET)) {
     fprintf(stderr, "Failed to seek to block %" PRIu64 " offset %" PRIu64 "\n",
             block_idx, block->offset);
@@ -971,7 +981,7 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
   }
 
   b->lines_size = block_line_count;
-  line_bytes = b->lines_capacity * sizeof(ZlineIndexLine);
+  line_bytes = b->lines_size * sizeof(ZlineIndexLine);
 
   /* Read line index */
   if (isBlockLineIndexCompressed(block)) {
