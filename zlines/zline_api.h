@@ -71,7 +71,8 @@ typedef struct ZlineBlock {
   /* Length of this block when decompressed. */
   /* uint32_t decompressed_length; */
 
-  /* Index of the first line stored in this block */
+  /* Index of the first line that starts in this block,
+     which is lines[0]. */
   uint64_t first_line;
 
   /* array of lines stored in this block */
@@ -135,6 +136,14 @@ typedef struct {
   uint64_t *block_starts;
 
   uint64_t max_line_len;
+
+  /* This is set to 1 whenever fseek is called. 
+     When writing the file, the current file offset is always
+     write_block->offset.
+     If a line is read from and earlier block, fseek will need to be called
+     to read the earlier block. If this flag has been set, then the caller
+     will know it needs to restore the file pointer. */
+  int fseek_flag;
 
   ZSTD_CStream *compress_stream;
   ZSTD_DStream *decompress_stream;

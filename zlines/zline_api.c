@@ -64,7 +64,12 @@ static int64_t compressToFile(ZlineFile *zf, const void *buf, int64_t len);
 /* return # of bytes written to buf */
 static int64_t decompressFromFile
   (ZlineFile *zf, void *readbuf, int64_t readbuf_len, int64_t compressed_len);
-int useCompressedLineIndex(ZlineFile *zf, void **data, uint32_t *len);
+
+/* Flush the current write_block. Return a pointer to the new write_block
+   (which may be the same one). */
+static ZlineBlock* flushBlock(ZlineFile *zf);
+
+static int useCompressedLineIndex(ZlineFile *zf, void **data, uint32_t *len);
 
 #define getBlockCompressedLen(block) ((block)->compressed_length_x & 0x7FFFFFFF)
 #define isBlockLineIndexCompressed(block) ((block)->compressed_length_x & 0x80000000)
@@ -82,11 +87,11 @@ static u64 getLineBlock(ZlineFile *zf, u64 line_idx);
 static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
                     uint64_t *block_idx,  ZlineBlock **block);
 
-/* If the given line is in this block, return a pointer to its index entry.
+/* If the given line starts in this block, return a pointer to its index entry.
    Otherwise return NULL. */
 static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx);
 
-/* Returns the number of lines stored in this block. */
+/* Returns the number of lines that start in this block. */
 static int getBlockLineCount(ZlineFile *zf, u64 block_idx);
 
 
@@ -284,6 +289,10 @@ static void addLineInternal(ZlineFile *zf, u64 length) {
   line = b->lines + b->lines_size;
   line->offset = b->content_size;
   line->length = length;
+  if (b->lines_size == 0) {
+    b->first_line = zf->line_count;
+    if (b->idx > 0) zf->block_starts[b->idx-1] = zf->line_count;
+  }
 
   /*
   printf("line %d: block %d, offset %d, length %d\n",
@@ -297,7 +306,7 @@ static void addLineInternal(ZlineFile *zf, u64 length) {
 }
 
 
-int useCompressedLineIndex
+static int useCompressedLineIndex
 (ZlineFile *zf, void **compressed_line_index, uint32_t *compressed_len) {
 
   ZlineBlock *b = zf->write_block;
@@ -325,7 +334,16 @@ int useCompressedLineIndex
 
 
 /* Flush the current write_block. Return a pointer to the new write_block
-   (which may be the same one). */
+   (which may be the same one).
+   
+   What do the blocks and block_starts array look like with lines that span
+   multiple blocks?
+
+                 [a---] [----] [--.b-] [c.d-] [---.] [e--.]
+   block starts: 0      0      1       2      2      4
+
+
+*/
 static ZlineBlock* flushBlock(ZlineFile *zf) {
   ZlineIndexBlock *block_idx = zf->blocks + (zf->blocks_size-1);
   ZlineBlock *b = zf->write_block;
@@ -338,42 +356,50 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
   assert(b);
   assert(b->offset > 0);
 
-  /* if the block is empty, do nothing */
-  if (b->lines_size == 0) return b;
+  /* if there is no data in the block, do nothing */
+  if (b->content_size == 0) return b;
 
   block_idx->offset = b->offset;
   block_idx->decompressed_length = b->content_size;
+  if (b->idx > 0)
+    zf->block_starts[b->idx - 1] = b->first_line;
 
   /* XXX expensive assert */
   assert((u64)ftell(zf->fp) == b->offset);
 
-  /* Try compressing the line index. If it's smaller, leave the data
-     and its size in compressed_line_index and compressed_line_index_len,
-     respectively and return true. Otherwise, return false. */
-  if (useCompressedLineIndex(zf, &compressed_line_index,
-                             &compressed_line_index_len)) {
-    /* write 4-byte length of compressed line index */
-    write_len = fwrite(&compressed_line_index_len,
-                       sizeof compressed_line_index_len, 1, zf->fp);
-    assert(write_len == 1);
-
-    /* write compressed line index */
-    write_len = fwrite(compressed_line_index, 1, compressed_line_index_len,
-                       zf->fp);
-    assert(write_len == compressed_line_index_len);
-    free(compressed_line_index);
-    
-    line_index_len = (sizeof compressed_line_index_len) +
-      compressed_line_index_len;
-    compressed_line_index_flag = (uint32_t)1 << 31;
-
+  if (b->lines_size == 0) {
+    line_index_len = 0;
   } else {
-    /* write uncompressed line index */
-    write_len = fwrite(b->lines, sizeof(ZlineIndexLine), b->lines_size,
-                       zf->fp);
-    assert(write_len == b->lines_size);
-    line_index_len = sizeof(ZlineIndexLine) * b->lines_size;
-    compressed_line_index_flag = 0;
+
+    /* Try compressing the line index. If it's smaller, leave the data
+       and its size in compressed_line_index and compressed_line_index_len,
+       respectively and return true. Otherwise, return false. */
+    if (useCompressedLineIndex(zf, &compressed_line_index,
+                               &compressed_line_index_len)) {
+      /* write 4-byte length of compressed line index */
+      write_len = fwrite(&compressed_line_index_len,
+                         sizeof compressed_line_index_len, 1, zf->fp);
+      assert(write_len == 1);
+
+      /* write compressed line index */
+      write_len = fwrite(compressed_line_index, 1, compressed_line_index_len,
+                         zf->fp);
+      assert(write_len == compressed_line_index_len);
+      free(compressed_line_index);
+    
+      line_index_len = (sizeof compressed_line_index_len) +
+        compressed_line_index_len;
+      compressed_line_index_flag = (uint32_t)1 << 31;
+
+    } else {
+      /* write uncompressed line index */
+      write_len = fwrite(b->lines, sizeof(ZlineIndexLine), b->lines_size,
+                         zf->fp);
+      assert(write_len == b->lines_size);
+      line_index_len = sizeof(ZlineIndexLine) * b->lines_size;
+      compressed_line_index_flag = 0;
+    }
+    
   }
   
   /* compress the line contents */
@@ -411,10 +437,17 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
   zf->blocks[block_no].compressed_length_x = 0;
 
   b->idx = block_no;
-  b->first_line += b->lines_size;
+
+  /* how many lines completed in this block?
+     [a--.b--.]  2
+     [a-------]  0
+     [--.a---.]  2
+     [b-------]  0
+     [-------.]  1
+  */
+  
   b->lines_size = 0;
   b->content_size = 0;
-  zf->block_starts[block_no-1] = b->first_line;
 
   return b;
 }
@@ -838,18 +871,17 @@ ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf) {
 
 /* Returns the length of the given line. */
 ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
+  ZlineIndexLine *line;
+  ZlineBlock *block;
+  u64 block_idx;
+  
   if (line_idx >= zf->line_count)
     return -1;
-  else {
-    ZlineIndexLine *line;
-    ZlineBlock *block;
-    u64 block_idx;
 
-    loadLine(zf, line_idx, &line, &block_idx, &block);
-    assert(line);
-
-    return line->length;
-  }
+  loadLine(zf, line_idx, &line, &block_idx, &block);
+  assert(line);
+  
+  return line->length;
 }
 
 /* Returns the length of the longest line. */
@@ -866,8 +898,12 @@ static u64 getLineBlock(ZlineFile *zf, u64 line_idx) {
   } else {
     u64 i;
     for (i=0; i < zf->blocks_size-1; i++) {
-      if (line_idx < zf->block_starts[i])
-        return i;
+      if (line_idx <= zf->block_starts[i]) {
+        if (line_idx == zf->block_starts[i])
+          return i+1;
+        else
+          return i;
+      }
     }
     return i;
   }
@@ -883,7 +919,8 @@ static u64 getLineBlock(ZlineFile *zf, u64 line_idx) {
 */
 static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
                     uint64_t *block_idx, ZlineBlock **block) {
-  
+
+  /* check if the line is in the write block */
   if (zf->mode == ZLINE_MODE_CREATE) {
     *line = lineInBlock(zf->write_block, line_idx);
     if (*line) {
@@ -892,14 +929,16 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
       return 0;
     }
   }
-  
+
+  /* check if it's in the read block */
   *line = lineInBlock(zf->read_block, line_idx);
   if (*line) {
     *block = zf->read_block;
     *block_idx = zf->read_block->idx;
     return 0;
   }
-  
+
+  /* load the block containing the line into the read block */
   *block_idx = getLineBlock(zf, line_idx);
   readBlock(zf, *block_idx);
   *line = lineInBlock(zf->read_block, line_idx);
@@ -912,7 +951,7 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
 
 static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx) {
   if (block &&
-      block->idx >= 0 &&
+      block->lines_size > 0 &&
       line_idx >= block->first_line &&
       line_idx < block->first_line + block->lines_size)
     return block->lines + (line_idx - block->first_line);
@@ -972,8 +1011,10 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
 
   b = zf->read_block;
   b->idx = block_idx;
+  b->offset = block->offset;
   b->first_line = (block_idx == 0) ? 0 : zf->block_starts[block_idx-1];
 
+  zf->fseek_flag = 1;
   if (fseek(zf->fp, block->offset, SEEK_SET)) {
     fprintf(stderr, "Failed to seek to block %" PRIu64 " offset %" PRIu64 "\n",
             block_idx, block->offset);
@@ -1025,11 +1066,11 @@ fail:
 */
 ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
                                       char *buf) {
-  ZlineIndexLine *linep = NULL;
-  ZlineBlock *block = NULL;
-  u64 file_pos = 0, block_idx;
-  char *result = NULL;
-  u64 length_extracted = 0, offset_in_block;
+  ZlineIndexLine *linep;
+  ZlineBlock *block;
+  int64_t file_pos = -1;
+  char *result;
+  u64 block_idx, length_extracted, offset_in_block;
 
   assert(zf);
 
@@ -1045,34 +1086,20 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
     case 3: load the block into zf->read_block
 
   */      
-      
 
+  zf->fseek_flag = 0;
+
+  /* save the file position in case we need to return to it */
   if (zf->mode == ZLINE_MODE_CREATE) {
-
     assert(zf->write_block);
-
-    /* check if the line is in the current write block */
-    linep = lineInBlock(zf->write_block, line_idx);
-
-    if (linep) {
-      block = zf->write_block;
-    } else {
-    
-      /* save my place in the file */
-      file_pos = ftell(zf->fp);
-
-      /* load the block */
-      /* readBlock(zf, getLineBlock(zf, line_idx)); */
-      loadLine(zf, line_idx, &linep, &block_idx, &block);
-
-    }
-    
-  } else {
-
-    /* load the block containing this line into zf->read_block */
-    loadLine(zf, line_idx, &linep, &block_idx, &block);
-    
+    file_pos = zf->write_block->offset;
+    /* XXX expensive assert */
+    assert(file_pos == ftell(zf->fp));
   }
+  
+  /* Load the block containing this line, either into write_block
+     or read_block. */
+  loadLine(zf, line_idx, &linep, &block_idx, &block);
 
   /* copy the offset and length because linep will become invalid
      if a different block is loaded */
@@ -1091,31 +1118,34 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
     }
   }
 
-  /* shortcut if it's coming from the write block */
-  if (block == zf->write_block) {
-    memcpy(result, zf->write_block->content + line.offset, line.length);
-    result[line.length] = 0;
-    return result;
-  }
-
   offset_in_block = line.offset;
+  length_extracted = 0;
 
   /* loop until the full line is extracted */
-  for (; length_extracted < line.length; block_idx++) {
-       
+  while (1) {
     u64 length_in_this_block;
 
-    /* read and decompress the block containing this line */
-    if (readBlock(zf, block_idx)) goto fail;
-
-    length_in_this_block = MIN(zf->read_block->content_size - offset_in_block, 
+    length_in_this_block = MIN(block->content_size - offset_in_block, 
                                line.length - length_extracted);
 
     memcpy(result + length_extracted,
-           zf->read_block->content + offset_in_block,
+           block->content + offset_in_block,
            length_in_this_block);
     length_extracted += length_in_this_block;
+
+    if (length_extracted == line.length)
+      break;
+
+    /* if the line was split across multiple blocks, it must be coming
+       from the read_block */
+    assert(block == zf->read_block);
+    
     offset_in_block = 0;
+    block_idx++;
+    
+    /* read and decompress the next block containing this line */
+    if (readBlock(zf, block_idx)) goto fail;
+    
   }
   result[line.length] = 0;
 
@@ -1125,7 +1155,7 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
   if (result != buf) free(result);
 
  ok:
-  if (zf->mode == ZLINE_MODE_CREATE)
+  if (zf->fseek_flag && file_pos != -1)
     fseek(zf->fp, file_pos, SEEK_SET);
   
   return result;
