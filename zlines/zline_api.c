@@ -333,8 +333,13 @@ static int useCompressedLineIndex
   buf = (char*) malloc(buf_size);
   assert(buf);
 
+  /*
   result = ZSTD_compressCCtx(zf->compress_stream, buf, buf_size,
                              b->lines, array_size, ZSTD_COMPRESSION_LEVEL);
+  */
+  result = ZSTD_compress(buf, buf_size, b->lines, array_size,
+                         ZSTD_COMPRESSION_LEVEL);
+  
   assert(!ZSTD_isError(result));
 
   if (result + sizeof(uint64_t) < array_size) {
@@ -366,7 +371,7 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
   u64 next_block_start, block_no;
   void *compressed_line_index;
   uint64_t compressed_line_index_len;
-  uint64_t compressed_line_index_flag;
+  uint64_t compressed_line_index_flag = 0;
 
   assert(b);
   assert(b->offset > 0);
@@ -394,12 +399,12 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
       /* write 4-byte length of compressed line index */
       write_len = fwrite(&compressed_line_index_len,
                          sizeof compressed_line_index_len, 1, zf->fp);
-      assert(write_len == 1);
+      if (write_len != 1) goto fail;
 
       /* write compressed line index */
       write_len = fwrite(compressed_line_index, 1, compressed_line_index_len,
                          zf->fp);
-      assert(write_len == compressed_line_index_len);
+      if (write_len != compressed_line_index_len) goto fail;
       free(compressed_line_index);
     
       line_index_len = (sizeof compressed_line_index_len) +
@@ -410,9 +415,8 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
       /* write uncompressed line index */
       write_len = fwrite(b->lines, sizeof(ZlineIndexLine), b->lines_size,
                          zf->fp);
-      assert(write_len == b->lines_size);
+      if (write_len != b->lines_size) goto fail;
       line_index_len = sizeof(ZlineIndexLine) * b->lines_size;
-      compressed_line_index_flag = 0;
     }
     
   }
@@ -444,6 +448,10 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
   b->content_size = 0;
 
   return b;
+
+ fail:
+  fprintf(stderr, "Error writing compressed block.\n");
+  return NULL;
 }
             
   

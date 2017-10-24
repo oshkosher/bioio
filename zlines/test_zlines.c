@@ -4,6 +4,7 @@
   Ed Karrels, ed.karrels@gmail.com, January 2017
 */
 
+#undef NDEBUG
 #include <assert.h>
 #include <string.h>
 #include "zline_api.h"
@@ -158,8 +159,44 @@ void test_long_line() {
   assert(!strcmp(s1, ZlineFile_get_line(z, 0, buf)));
   ZlineFile_close(z);
   
+  putchar('.'); fflush(stdout);
 }  
+
+
+void test_many_lines() {
+  char buf[100], buf2[100];
+  int i, n = 1000;
+  ZlineFile *z;
+
+  z = ZlineFile_create(FILENAME, 0);
+
+  for (i=0; i < n; i++) {
+    sprintf(buf, "test line %10d", i);
+    ZlineFile_add_line(z, buf, -1);
+  }
+
+  for (i=0; i < n; i++) {
+    sprintf(buf2, "test line %10d", i);
+    ZlineFile_get_line(z, i, buf);
+    assert(!strcmp(buf, buf2));
+  }
+
+  ZlineFile_close(z);
+
+  z = ZlineFile_read(FILENAME);
+
+  for (i=0; i < n; i++) {
+    sprintf(buf2, "test line %10d", i);
+    ZlineFile_get_line(z, i, buf);
+    assert(!strcmp(buf, buf2));
+  }
   
+  ZlineFile_close(z);
+
+  putchar('.'); fflush(stdout);
+}    
+  
+
 
 int main() {
 
@@ -167,6 +204,8 @@ int main() {
   test_add_some();
   test_blocks();
   test_long_line();
+  test_many_lines();
+  
   remove(FILENAME);
 
   printf("ok\n");

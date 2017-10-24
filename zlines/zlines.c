@@ -256,6 +256,7 @@ int createFile(Options *opt) {
   u64 input_file_size = 0, output_file_size;
   u64 min_line_len = UINT64_MAX, max_line_len = 0;
   u64 next_update = CREATE_FILE_UPDATE_FREQUENCY_BYTES;
+  u64 overhead;
 
   /* open the text file */
   FILE *input_fp = openFileOrStdin(opt->input_filename);
@@ -317,13 +318,15 @@ int createFile(Options *opt) {
   for (idx = 0; idx < zf->blocks_size; idx++)
     total_zblock_size += ZlineFile_get_block_size_compressed(zf, idx);
 
+  overhead = output_file_size - total_zblock_size;
+  
   if (!quiet) {
     printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
            "compressed to %" PRIu64 " blocks, %s"
-           " bytes with %s bytes overhead\n", 
+           " bytes with %s bytes overhead, %.2f bytes per line\n", 
            min_line_len, max_line_len,
            zf->blocks_size, commafy(buf1, total_zblock_size),
-           commafy(buf2, output_file_size - total_zblock_size));
+           commafy(buf2, overhead), (double)overhead / zf->line_count);
   }
   
   ZlineFile_close(zf);
