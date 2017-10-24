@@ -210,9 +210,9 @@ ZLINE_EXPORT uint64_t ZlineFile_get_block_count(ZlineFile *zf);
 
 /* Returns the compressed or decompressed size of the given block.
    If block_idx is invalid, returns 0. */
-ZLINE_EXPORT int ZlineFile_get_block_size_original
+ZLINE_EXPORT uint64_t ZlineFile_get_block_size_original
   (ZlineFile *zf, uint64_t block_idx);
-ZLINE_EXPORT int ZlineFile_get_block_size_compressed
+ZLINE_EXPORT uint64_t ZlineFile_get_block_size_compressed
   (ZlineFile *zf, uint64_t block_idx);
   
 

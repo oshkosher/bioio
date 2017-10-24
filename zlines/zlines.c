@@ -347,11 +347,11 @@ int fileDetails(Options *opt) {
 
   printf("data starts at offset %" PRIu64 "\n", zf->data_offset);
   printf("index starts at offset %" PRIu64 "\n", zf->index_offset);
-  
+
   printf("%" PRIu64 " compressed blocks\n", zf->blocks_size);
   for (i=0; i < zf->blocks_size; i++) {
-    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %d, "
-           "decompressed len %d\n",
+    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %" PRIu64 ", "
+           "decompressed len %" PRIu64 "\n",
            i, zf->blocks[i].offset, ZlineFile_get_block_size_compressed(zf, i),
            ZlineFile_get_block_size_original(zf, i));
   }

@@ -37,7 +37,7 @@ LIBS=-lm
 OPT=-O3 -DNDEBUG
 CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
-CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
+CC = gcc $(CFLAGS) -D_GNU_SOURCE
 
 zlines: zlines.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
