@@ -391,6 +391,7 @@ int verifyFile(Options *opt) {
   }
 
   line_count = ZlineFile_line_count(zf);
+  extracted_line = (char*) malloc(ZlineFile_max_line_length(zf) + 1);
 
   text_file = openFileOrStdin(text_filename);
   if (!text_file) return 1;
@@ -406,7 +407,7 @@ int verifyFile(Options *opt) {
       return 1;
     }
     
-    extracted_line = ZlineFile_get_line(zf, line_idx, NULL);
+    ZlineFile_get_line(zf, line_idx, extracted_line);
     if (strcmp(extracted_line, line)) {
       printf("Line %" PRIu64 " mismatch.\n", line_idx);
       err_count++;
@@ -415,7 +416,6 @@ int verifyFile(Options *opt) {
         return 1;
       }
     }
-    free(extracted_line);
 
     line_idx++;
   }
@@ -426,6 +426,7 @@ int verifyFile(Options *opt) {
     err_count++;
   }
 
+  free(extracted_line);
   free(line);
   ZlineFile_close(zf);
   if (text_file != stdin) fclose(text_file);

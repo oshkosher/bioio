@@ -700,15 +700,20 @@ static int64_t compressToFile(ZlineFile *zf, const void *input,
       if (flushOutbuf(zf, &outbuf, &bytes_written)) return -1;
   }
 
-  write_len = ZSTD_endStream(zf->compress_stream, &outbuf);
-  if (write_len > 0) {
-    if (flushOutbuf(zf, &outbuf, &bytes_written)) return -1;
+  while (1) {
     write_len = ZSTD_endStream(zf->compress_stream, &outbuf);
+    if (ZSTD_isError(write_len)) {
+      fprintf(stderr, "Error writing compressed data\n");
+      assert(write_len == 0);
+    }
+    if (write_len == 0) break;
+    if (flushOutbuf(zf, &outbuf, &bytes_written)) return -1;
   }
 
   assert(write_len == 0);
 
-  flushOutbuf(zf, &outbuf, &bytes_written);
+  if (outbuf.pos > 0)
+    flushOutbuf(zf, &outbuf, &bytes_written);
   
   return bytes_written;
 }
