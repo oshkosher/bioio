@@ -48,6 +48,7 @@ typedef struct {
   /* used in "get" mode */
   u64 *line_numbers;
   int line_number_count;
+  int flag_blocks, flag_lines;
 } Options;
 
 int quiet = 0;
@@ -98,6 +99,7 @@ int parseArgs(int argc, char **argv, Options *opt) {
   opt->input_filename = opt->output_filename = NULL;
   opt->line_numbers = 0;
   opt->line_number_count = 0;
+  opt->flag_blocks = opt->flag_lines = 0;
 
   if (argc < 2) printHelp();
   
@@ -126,17 +128,25 @@ int parseArgs(int argc, char **argv, Options *opt) {
     }
       
     else if (!strcmp(argv[argno], "-b")) {
-      argno++;
-      if (argno >= argc) printHelp();
-      if (1 != sscanf(argv[argno], "%d", &opt->block_size) ||
-          opt->block_size <= 1) {
-        fprintf(stderr, "Invalid block size: \"%s\"\n", argv[argno]);
-        return 1;
+      if (opt->mode == PROG_DETAILS) {
+        opt->flag_blocks = 1;
+      } else {
+        argno++;
+        if (argno >= argc) printHelp();
+        if (1 != sscanf(argv[argno], "%d", &opt->block_size) ||
+            opt->block_size <= 1) {
+          fprintf(stderr, "Invalid block size: \"%s\"\n", argv[argno]);
+          return 1;
+        }
       }
     }
       
     else if (!strcmp(argv[argno], "-q")) {
       quiet = 1;
+    }
+      
+    else if (!strcmp(argv[argno], "-l")) {
+      opt->flag_lines = 1;
     }
       
     else {
@@ -205,8 +215,11 @@ void printHelp(void) {
           "  zlines print <zlines file>\n"
           "    prints every line in the file\n"
           "\n"
-          "  zlines details <zlines file>\n"
+          "  zlines details [options] <zlines file>\n"
           "    prints internal details about the data encoded in the file\n"
+          "    options:\n"
+          "      -b: print details about each compressed block\n"
+          "      -l: print details about each line of data\n"
           "\n"
           "  zlines verify <zlines file> <text file>\n"
           "    tests if the zlines file matches the given text file\n"
@@ -322,10 +335,11 @@ int createFile(Options *opt) {
   
   if (!quiet) {
     printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
-           "compressed to %" PRIu64 " blocks, %s"
-           " bytes with %s bytes overhead, %.2f bytes per line\n", 
+           "compressed to %s bytes in %" PRIu64 " block%s\n"
+           "%s bytes overhead, %.2f bytes per line\n", 
            min_line_len, max_line_len,
-           zf->blocks_size, commafy(buf1, total_zblock_size),
+           commafy(buf1, total_zblock_size),
+           zf->blocks_size, zf->blocks_size==1 ? "" : "s",
            commafy(buf2, overhead), (double)overhead / zf->line_count);
   }
   
@@ -345,25 +359,36 @@ int fileDetails(Options *opt) {
     return 1;
   }
 
-  printf("data starts at offset %" PRIu64 "\n", zf->data_offset);
-  printf("index starts at offset %" PRIu64 "\n", zf->index_offset);
+  printf("%" PRIu64 " lines, longest line %" PRIu64 " bytes\n",
+         zf->line_count, zf->max_line_len);
+  
+  printf("data begins at offset %" PRIu64 "\n", zf->data_offset);
+  printf("block index at offset %" PRIu64 "\n", zf->index_offset);
 
   printf("%" PRIu64 " compressed blocks\n", zf->blocks_size);
-  for (i=0; i < zf->blocks_size; i++) {
-    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %" PRIu64 ", "
-           "decompressed len %" PRIu64 "\n",
-           i, zf->blocks[i].offset, ZlineFile_get_block_size_compressed(zf, i),
-           ZlineFile_get_block_size_original(zf, i));
+
+  if (opt->flag_blocks) {
+    for (i=0; i < zf->blocks_size; i++) {
+      printf("block %" PRIu64 ": %" PRIu64 " lines, %" PRIu64 " bytes->"
+             "%" PRIu64 " bytes, offset %" PRIu64 "\n",
+             i,
+             ZlineFile_get_block_line_count(zf, i),
+             ZlineFile_get_block_size_original(zf, i),
+             ZlineFile_get_block_size_compressed(zf, i),
+             zf->blocks[i].offset);
+    }
   }
 
-  /*
-  printf("%" PRIu64 " lines\n", zf->line_count);
-  for (i=0; i < zf->line_count; i++) {
-    printf("line %" PRIu64 ": in block %" PRIu64 ", offset %" PRIu64 ", len %" PRIu64
-           "\n",
-           i, zf->lines[i].block_idx, zf->lines[i].offset, zf->lines[i].length);
-  } 
-  */   
+  if (opt->flag_lines) {
+    for (i=0; i < zf->line_count; i++) {
+      uint64_t block_idx, length, offset;
+      ZlineFile_get_line_details(zf, i, &length, &offset, &block_idx);
+      
+      printf("line %" PRIu64 ": in block %" PRIu64 ", offset %" PRIu64
+             ", len %" PRIu64 "\n",
+             i, block_idx, offset, length);
+    }
+  }
 
   ZlineFile_close(zf);
   

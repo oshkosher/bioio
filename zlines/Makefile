@@ -22,7 +22,7 @@ endif
 # cl /LD common.c /Fetest.dll
 # cl /LD /EHsc /nologo  /O2 /MT -D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS /Izstd\lib zline_api.c common.c zstd/build/VS_scripts/bin/Release/x64/libzstd.lib /Felibzlines.dll
 
-EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
+EXECS = create_2d_data zlines zlines_test transpose \
   check_transpose transpose_mmap test_zlines $(SHLIB)
 
 all: $(EXECS)

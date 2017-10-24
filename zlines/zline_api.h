@@ -214,7 +214,14 @@ ZLINE_EXPORT uint64_t ZlineFile_get_block_size_original
   (ZlineFile *zf, uint64_t block_idx);
 ZLINE_EXPORT uint64_t ZlineFile_get_block_size_compressed
   (ZlineFile *zf, uint64_t block_idx);
-  
+ZLINE_EXPORT uint64_t ZlineFile_get_block_first_line
+  (ZlineFile *zf, uint64_t block_idx);
+ZLINE_EXPORT uint64_t ZlineFile_get_block_line_count
+  (ZlineFile *zf, uint64_t block_idx);
+ZLINE_EXPORT int ZlineFile_get_line_details
+  (ZlineFile *zf, uint64_t line_idx, uint64_t *length,
+   uint64_t *offset_in_block, uint64_t *block_idx);
+
 
 ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf);
 

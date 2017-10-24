@@ -101,11 +101,6 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
    Otherwise return NULL. */
 static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx);
 
-/* Returns the number of lines that start in this block. */
-static int getBlockLineCount(ZlineFile *zf, u64 block_idx);
-
-
-
 /* read a block, store the decompressed result in read_block */
 static int readBlock(ZlineFile *zf, u64 block_idx);
 
@@ -355,14 +350,6 @@ static int useCompressedLineIndex
 
 /* Flush the current write_block. Return a pointer to the new write_block
    (which may be the same one).
-   
-   What do the blocks and block_starts array look like with lines that span
-   multiple blocks?
-
-                 [a---] [----] [--.b-] [c.d-] [---.] [e--.]
-   block starts: 0      0      1       2      2      4
-
-
 */
 static ZlineBlock* flushBlock(ZlineFile *zf) {
   ZlineIndexBlock *block_idx = zf->blocks + (zf->blocks_size-1);
@@ -854,7 +841,7 @@ ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
   for (block_idx = 0; block_idx < zf->blocks_size; block_idx++) {
     max_content_len = MAX(max_content_len,
                           zf->blocks[block_idx].decompressed_length);
-    max_line_count = MAX(max_line_count, getBlockLineCount(zf, block_idx));
+    max_line_count = MAX(max_line_count, ZlineFile_get_block_line_count(zf, block_idx));
   }
 
   zf->read_block = createBlock(max_content_len, max_line_count);
@@ -900,17 +887,15 @@ ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf) {
 
 /* returns the index of the block containing this line */
 static u64 getLineBlock(ZlineFile *zf, u64 line_idx) {
-  /* linear scan */
   if (zf->blocks_size <= 1) {
     return 0;
   } else {
     u64 i;
+    /* linear scan */
+    /* XXX change to binary scan for larger arrays */
     for (i=0; i < zf->blocks_size-1; i++) {
-      if (line_idx <= zf->block_starts[i]) {
-        if (line_idx == zf->block_starts[i])
-          return i+1;
-        else
-          return i;
+      if (line_idx <= zf->block_starts[i] - 1) {
+        return i;
       }
     }
     return i;
@@ -956,6 +941,22 @@ static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
 }
 
 
+ZLINE_EXPORT int ZlineFile_get_line_details
+  (ZlineFile *zf, uint64_t line_idx, uint64_t *length,
+   uint64_t *offset, uint64_t *block_idx) {
+  ZlineIndexLine *line;
+  ZlineBlock *block;
+
+  if (line_idx >= zf->line_count) return -1;
+  
+  *block_idx = getLineBlock(zf, line_idx);
+  loadLine(zf, line_idx, &line, &block);
+  *length = line->length;
+  *offset = line->offset;
+  return 0;
+}
+
+
 static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx) {
   if (block &&
       block->lines_size > 0 &&
@@ -965,23 +966,6 @@ static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx) {
   else
     return NULL;
 }
-
-
-/* Returns the number of lines stored in this block. */
-static int getBlockLineCount(ZlineFile *zf, u64 block_idx) {
-  u64 block_start, block_end;
-
-  block_start = (block_idx == 0)
-    ? 0
-    : zf->block_starts[block_idx-1];
-  block_end = (block_idx == zf->blocks_size-1)
-    ? zf->line_count
-    : zf->block_starts[block_idx];
-
-  return block_end - block_start;
-}
-
-
 
 
 /* Read a block, store the decompressed result in zf->read_block.
@@ -1007,7 +991,7 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
   block = zf->blocks + block_idx;
 
   /* compute the number of lines in this block */
-  block_line_count = getBlockLineCount(zf, block_idx);
+  block_line_count = ZlineFile_get_block_line_count(zf, block_idx);
 
   /* allocate zf->read_block if needed, otherwise make sure its
      content and line arrays are big enough */
@@ -1196,3 +1180,36 @@ ZLINE_EXPORT uint64_t ZlineFile_get_block_size_compressed
   return getBlockCompressedLen(zf->blocks + block_idx);
 }
 
+
+/* Returns the index of the first line in the block.
+   If block_idx is invalid, returns 0. */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_first_line
+(ZlineFile *zf, uint64_t block_idx) {
+  assert(zf);
+  if (block_idx >= zf->blocks_size) return 0;
+
+  if (block_idx == 0)
+    return 0;
+  else
+    return zf->block_starts[block_idx - 1];
+}
+
+
+/* Returns the number of lines stored in the block.
+   If block_idx is invalid, returns 0. */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_line_count
+(ZlineFile *zf, uint64_t block_idx) {
+  u64 block_start, block_end;
+
+  assert(zf);
+  if (block_idx >= zf->blocks_size) return 0;
+
+  block_start = (block_idx == 0)
+    ? 0
+    : zf->block_starts[block_idx-1];
+  block_end = (block_idx == zf->blocks_size-1)
+    ? zf->line_count
+    : zf->block_starts[block_idx];
+
+  return block_end - block_start;
+}
