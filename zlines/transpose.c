@@ -15,7 +15,7 @@
   The goal of this is to support arbitrarily large data sets (much larger than
   memory) efficiently.
 
-  Ed Karrels, edk@illinois.edu, January 2017
+  Ed Karrels, ed.karrels@gmail.com, January 2017
 */
 #include <assert.h>
 #include <errno.h>

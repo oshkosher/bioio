@@ -1,3 +1,16 @@
+/*
+  zlines
+
+  A tool for storing a large number of text lines in a compressed file
+  and an API for accessing those lines efficiently.
+
+  This file is the command line tool for creating and managing zlines files.
+
+  https://github.com/oshkosher/bioio/tree/master/zlines
+
+  Ed Karrels, ed.karrels@gmail.com, January 2017
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -243,6 +256,7 @@ int createFile(Options *opt) {
   u64 input_file_size = 0, output_file_size;
   u64 min_line_len = UINT64_MAX, max_line_len = 0;
   u64 next_update = CREATE_FILE_UPDATE_FREQUENCY_BYTES;
+  u64 overhead;
 
   /* open the text file */
   FILE *input_fp = openFileOrStdin(opt->input_filename);
@@ -300,18 +314,19 @@ int createFile(Options *opt) {
   zf = ZlineFile_read(opt->output_filename);
   assert(zf);
 
-  /* use internal data structure to compute the compressed size of
-     the data */
-  for (idx = 0; idx < zf->block_count; idx++)
-    total_zblock_size += zf->blocks[idx].compressed_length;
+  /* compute the compressed size of the data */
+  for (idx = 0; idx < zf->blocks_size; idx++)
+    total_zblock_size += ZlineFile_get_block_size_compressed(zf, idx);
 
+  overhead = output_file_size - total_zblock_size;
+  
   if (!quiet) {
     printf("\nline lengths %" PRIu64 "..%" PRIu64 "\n"
            "compressed to %" PRIu64 " blocks, %s"
-           " bytes with %s bytes overhead\n", 
+           " bytes with %s bytes overhead, %.2f bytes per line\n", 
            min_line_len, max_line_len,
-           zf->block_count, commafy(buf1, total_zblock_size),
-           commafy(buf2, output_file_size - total_zblock_size));
+           zf->blocks_size, commafy(buf1, total_zblock_size),
+           commafy(buf2, overhead), (double)overhead / zf->line_count);
   }
   
   ZlineFile_close(zf);
@@ -332,21 +347,23 @@ int fileDetails(Options *opt) {
 
   printf("data starts at offset %" PRIu64 "\n", zf->data_offset);
   printf("index starts at offset %" PRIu64 "\n", zf->index_offset);
-  
-  printf("%" PRIu64 " compressed blocks\n", zf->block_count);
-  for (i=0; i < zf->block_count; i++) {
-    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %" PRIu64
-           ", decompressed len %" PRIu64 "\n",
-           i, zf->blocks[i].offset, zf->blocks[i].compressed_length,
-           zf->blocks[i].decompressed_length);
+
+  printf("%" PRIu64 " compressed blocks\n", zf->blocks_size);
+  for (i=0; i < zf->blocks_size; i++) {
+    printf("block %" PRIu64 ": offset %" PRIu64 ", compressed len %" PRIu64 ", "
+           "decompressed len %" PRIu64 "\n",
+           i, zf->blocks[i].offset, ZlineFile_get_block_size_compressed(zf, i),
+           ZlineFile_get_block_size_original(zf, i));
   }
 
+  /*
   printf("%" PRIu64 " lines\n", zf->line_count);
   for (i=0; i < zf->line_count; i++) {
     printf("line %" PRIu64 ": in block %" PRIu64 ", offset %" PRIu64 ", len %" PRIu64
            "\n",
            i, zf->lines[i].block_idx, zf->lines[i].offset, zf->lines[i].length);
-  }    
+  } 
+  */   
 
   ZlineFile_close(zf);
   
@@ -374,6 +391,7 @@ int verifyFile(Options *opt) {
   }
 
   line_count = ZlineFile_line_count(zf);
+  extracted_line = (char*) malloc(ZlineFile_max_line_length(zf) + 1);
 
   text_file = openFileOrStdin(text_filename);
   if (!text_file) return 1;
@@ -389,7 +407,7 @@ int verifyFile(Options *opt) {
       return 1;
     }
     
-    extracted_line = ZlineFile_get_line(zf, line_idx, NULL);
+    ZlineFile_get_line(zf, line_idx, extracted_line);
     if (strcmp(extracted_line, line)) {
       printf("Line %" PRIu64 " mismatch.\n", line_idx);
       err_count++;
@@ -398,7 +416,6 @@ int verifyFile(Options *opt) {
         return 1;
       }
     }
-    free(extracted_line);
 
     line_idx++;
   }
@@ -409,6 +426,7 @@ int verifyFile(Options *opt) {
     err_count++;
   }
 
+  free(extracted_line);
   free(line);
   ZlineFile_close(zf);
   if (text_file != stdin) fclose(text_file);

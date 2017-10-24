@@ -22,3 +22,4 @@ create_2d_data
 disk_speed
 transpose
 transpose2
+test_zlines.out

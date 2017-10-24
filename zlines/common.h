@@ -1,3 +1,9 @@
+/*
+  A set of common useful functions and macros.
+
+  Ed Karrels, ed.karrels@gmail.com, April 2012
+*/  
+
 #ifndef __COMMON_H__
 #define __COMMON_H__
 

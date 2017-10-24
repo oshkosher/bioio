@@ -32,8 +32,15 @@ Files
 
 File format
  - 256 byte text header containing a version number, locations of the data and index, number of text lines, number of compressed blocks, and other settings
- - compressed blocks of data. By default, 4 megabytes of data are compressed into each block (can be changed with the -b option to zlines create)
+ - Compressed blocks of data. By default, 4 megabytes of data are compressed into each block (can be changed with the -b option to zlines create). Each block contains an index of the lines in the block, followed by the contents of each line.
  - 0-7 pad bytes, so the index is 8-byte aligned
+ - length of the compressed index
+ - compressed block array
+ - compressed array of the index of the first line in each block
+
+
+
+
  - if the index is not compressed:
    - block array with an entry for each compressed block: offset in the file, original length, and compressed length
    - line array with an entry for each line of text: block index, offset, and original length

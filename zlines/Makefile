@@ -23,7 +23,7 @@ endif
 # cl /LD /EHsc /nologo  /O2 /MT -D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS /Izstd\lib zline_api.c common.c zstd/build/VS_scripts/bin/Release/x64/libzstd.lib /Felibzlines.dll
 
 EXECS = create_2d_data zlines zlines_test transpose transpose_v0 \
-  check_transpose transpose_mmap $(SHLIB)
+  check_transpose transpose_mmap test_zlines $(SHLIB)
 
 all: $(EXECS)
 
@@ -34,10 +34,10 @@ ZSTD_LIB_FILE=zstd/lib/libzstd.a
 ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
 # OPT=-g
-OPT=-O3
+OPT=-O3 -DNDEBUG
 CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 
-CC = gcc $(CFLAGS) $(OPT) -D_GNU_SOURCE
+CC = gcc $(CFLAGS) -D_GNU_SOURCE
 
 zlines: zlines.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
@@ -49,6 +49,9 @@ common.o: common.c common.h
 	$(CC) -c $<
 
 zlines_test: zlines_test.c zline_api.o common.o
+	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
+
+test_zlines: test_zlines.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
 
 transpose: transpose.c common.o
@@ -111,5 +114,5 @@ $(ZSTD_SHLIB): $(ZSTD_SHLIB_ORIG)
 
 clean:
 	rm -rf $(EXECS) *.o *.obj *.exp *.lib *.stackdump *.dSYM *.so *.so.1 \
-	  *.dll *.dylib __pycache__
+	  *.dll *.dylib __pycache__ test_zlines.out
 

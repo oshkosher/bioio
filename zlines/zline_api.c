@@ -1,7 +1,20 @@
+/*
+  zlines
+
+  A tool for storing a large number of text lines in a compressed file
+  and an API for accessing those lines efficiently.
+
+
+  https://github.com/oshkosher/bioio/tree/master/zlines
+
+  Ed Karrels, ed.karrels@gmail.com, January 2017
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -14,81 +27,139 @@
 #include "zstd.h"
 #include "common.h"
 
+#define DEFAULT_BLOCK_SIZE (8*1024*1024)
+#define MAX_IN_MEMORY_BLOCK DEFAULT_BLOCK_SIZE
 #define INITIAL_BLOCK_CAPACITY 100
-#define INITIAL_LINE_CAPACITY 1000
+#define INITIAL_LINE_CAPACITY 100
 #define HEADER_SIZE 256
 #define ZSTD_COMPRESSION_LEVEL 3
 #define MAX_HEADER_LINE_LEN 100
 #define DO_COMPRESS_INDEX 1
+#define COMPRESS_TO_FILE_BUFFER_SIZE 8192
 
 #define ZLINE_MODE_CREATE 1
 #define ZLINE_MODE_READ 2
 
-#define MIN(a,b) ((a)<(b)?(a):(b))
-#define MAX(a,b) ((a)>(b)?(a):(b))
-
 typedef uint64_t u64;
+typedef int64_t i64;
 
 static int writeHeader(ZlineFile *zf);
 static int readHeader(ZlineFile *zf);
-static void blocksInsureCapacity(ZlineFile *zf, u64 capacity);
-static void linesInsureCapacity(ZlineFile *zf, u64 capacity);
 
-/* read a block, decompress it, store the decompressed result in outbuf,
-   store the decompressed size in outbuf_size, and store the index of the block
-   in outbuf_idx. */
-static int getBlock(ZlineFile *zf, u64 block_idx);
+/* Allocate a new ZlineBlock struct */
+static ZlineBlock *createBlock(int content_capacity, int line_capacity);
+
+/* Deallocate a ZlineBlock */
+static void freeBlock(ZlineBlock *);
+
+static void addLineInternal(ZlineFile *zf, u64 length);
+static void blocksInsureCapacity(ZlineFile *zf, u64 capacity);
+static void linesInsureCapacity(ZlineBlock *b, int capacity);
+static void contentInsureCapacity(ZlineBlock *b, int capacity);
+static void ZlineFile_deallocate(ZlineFile *zf);
+
+/* used by compressToFile to flush a buffer to disk */
+static int flushOutbuf(ZlineFile *zf, ZSTD_outBuffer *outbuf,
+                       int64_t *bytes_written);
+
+/* Returns the number of compressed bytes written to zf->fp or -1 on error */
+static int64_t compressToFile(ZlineFile *zf, const void *buf, int64_t len);
+
+/* Returns # of bytes written to buf.
+   readbuf_len - size of readbuf. Write no more than this many bytes.
+   compressed_len - size of the compressed data on disk.
+*/
+static int64_t decompressFromFile
+  (ZlineFile *zf, void *readbuf, int64_t readbuf_len, int64_t compressed_len);
+
+/* Flush the current write_block. Return a pointer to the new write_block
+   (which may be the same one). */
+static ZlineBlock* flushBlock(ZlineFile *zf);
+
+static int useCompressedLineIndex(ZlineFile *zf, void **data, uint64_t *len);
+
+#define LINE_INDEX_COMPRESSED_FLAG ((u64)1 << 63)
+#define getBlockCompressedLen(block) \
+  ((block)->compressed_length_x & ~LINE_INDEX_COMPRESSED_FLAG)
+#define isBlockLineIndexCompressed(block) \
+  ((((block)->compressed_length_x) >> 63) & 1)
+
+/* returns the index of the block containing this line */
+static u64 getLineBlock(ZlineFile *zf, u64 line_idx);
+
+/* Make sure a line is in memory.
+   Set *block to the either zf->write_block or zf->read_block, whichever
+   contains the line.
+   Set *line to point to the record of its offset and length.
+   If the line isn't in memory, the block containing it will
+   be loaded into zf->read_block.
+*/
+static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
+                    ZlineBlock **block);
+
+/* If the given line starts in this block, return a pointer to its index entry.
+   Otherwise return NULL. */
+static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx);
+
+/* Returns the number of lines that start in this block. */
+static int getBlockLineCount(ZlineFile *zf, u64 block_idx);
+
+
+
+/* read a block, store the decompressed result in read_block */
+static int readBlock(ZlineFile *zf, u64 block_idx);
 
 
 ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *output_filename,
-                                         int block_size) {
+                                         int64_t block_size) {
+
+  if (block_size > INT_MAX) {
+    fprintf(stderr, "ZlineFile_create error: block_size too large\n");
+    return NULL;
+  } else if (block_size <= 0) {
+    block_size = DEFAULT_BLOCK_SIZE;
+  }
+  
   ZlineFile *zf = (ZlineFile*) calloc(1, sizeof(ZlineFile));
   if (!zf) {
     fprintf(stderr, "Out of memory\n");
     return NULL;
   }
 
-  zf->filename = output_filename;
+  zf->filename = strdup(output_filename);
   zf->mode = ZLINE_MODE_CREATE;
   zf->is_index_compressed = DO_COMPRESS_INDEX;
   zf->data_offset = HEADER_SIZE;
-  zf->inbuf_capacity = block_size;
-  zf->inbuf = (char*) malloc(zf->inbuf_capacity);
-  if (!zf->inbuf) {
-    fprintf(stderr, "Out of memory\n");
-    goto fail;
-  }
-
-  /* allocate a buffer big enough to fit the largest possible compressed
-     version of zf->inbuf. */
-  zf->outbuf_capacity = ZSTD_compressBound(zf->inbuf_capacity);
-  zf->outbuf = (char*) malloc(zf->outbuf_capacity);
-  if (!zf->outbuf) {
-    fprintf(stderr, "Out of memory\n");
-    goto fail;
-  }
-  zf->outbuf_idx = UINT64_MAX;
+  zf->write_block = createBlock(block_size, -1);
+  zf->write_block->idx = 0;
 
   /* open the output file */
-  zf->fp = fopen(output_filename, "wb");
+  zf->fp = fopen(output_filename, "w+b");
   if (!zf->fp) goto fail;
 
   if (writeHeader(zf)) goto fail;
 
   blocksInsureCapacity(zf, INITIAL_BLOCK_CAPACITY);
-  linesInsureCapacity(zf, INITIAL_LINE_CAPACITY);
+  linesInsureCapacity(zf->write_block, INITIAL_LINE_CAPACITY);
 
-  zf->blocks[0].offset = HEADER_SIZE;
+  zf->blocks_size = 1;
+  zf->blocks[0].offset = 0;
+  zf->blocks[0].decompressed_length = 0;
+  zf->blocks[0].compressed_length_x = 0;
+
+  zf->write_block->offset = HEADER_SIZE;
+
+  zf->compress_stream = ZSTD_createCStream();
+  assert(zf->compress_stream);
+
+  /* only allocate if needed */
+  zf->decompress_stream = NULL;
   
   return zf;
 
  fail:
-  if (zf->fp) fclose(zf->fp);
-  free(zf->inbuf);
-  free(zf->outbuf);
-  free(zf->blocks);
-  free(zf->lines);
-  free(zf);
+  ZlineFile_deallocate(zf);
+
   return NULL;
 }
 
@@ -98,14 +169,15 @@ static int writeHeader(ZlineFile *zf) {
   int pos = 0;
   size_t write_len;
 
-  pos += sprintf(buf, "zline v1.0\n");
+  pos += sprintf(buf, "zline v2.0\n");
   pos += sprintf(buf+pos, "data_offset %" PRIu64 "\n", zf->data_offset);
   pos += sprintf(buf+pos, "index_offset %" PRIu64 "\n", zf->index_offset);
   pos += sprintf(buf+pos, "lines %" PRIu64 "\n", zf->line_count);
-  pos += sprintf(buf+pos, "blocks %" PRIu64 "\n", zf->block_count);
+  pos += sprintf(buf+pos, "blocks %" PRIu64 "\n", zf->blocks_size);
+  pos += sprintf(buf+pos, "maxlen %" PRIu64 "\n", zf->max_line_len);
   pos += sprintf(buf+pos, "alg fzstd\n");
   if (zf->is_index_compressed)
-    pos += sprintf(buf+pos, "compress_index\n");
+    pos += sprintf(buf+pos, "zi\n");
   buf[pos++] = '\n';
   assert(pos <= HEADER_SIZE);
 
@@ -147,7 +219,7 @@ static int readHeader(ZlineFile *zf) {
   if (!fgets(buf, MAX_HEADER_LINE_LEN, zf->fp))
     goto format_error;
   
-  if (strncmp(buf, "zline v1.0", 10))
+  if (strncmp(buf, "zline v2.0", 10))
     goto format_error;
 
   while (fgets(buf, MAX_HEADER_LINE_LEN, zf->fp) && buf[0] != '\n') {
@@ -161,14 +233,16 @@ static int readHeader(ZlineFile *zf) {
     } else if (!strcmp(word, "lines")) {
       if (1 != sscanf(buf+pos, "%" SCNu64, &zf->line_count)) goto format_error;
     } else if (!strcmp(word, "blocks")) {
-      if (1 != sscanf(buf+pos, "%" SCNu64, &zf->block_count)) goto format_error;
+      if (1 != sscanf(buf+pos, "%" SCNu64, &zf->blocks_size)) goto format_error;
+    } else if (!strcmp(word, "maxlen")) {
+      if (1 != sscanf(buf+pos, "%" SCNu64, &zf->max_line_len)) goto format_error;
     } else if (!strcmp(word, "alg")) {
       if (1 != sscanf(buf+pos, "%s", word)) goto format_error;
       if (strcmp(word, "fzstd")) {
         fprintf(stderr, "Unrecognized compression algorithm: \"%s\"\n", word);
         return 1;
       }
-    } else if (!strcmp(word, "compress_index")) {
+    } else if (!strcmp(word, "zi")) {
       zf->is_index_compressed = 1;
     } else {
       goto format_error;
@@ -178,7 +252,7 @@ static int readHeader(ZlineFile *zf) {
   if (zf->data_offset == 0 ||
       zf->index_offset == 0 ||
       zf->line_count == 0 ||
-      zf->block_count == 0) {
+      zf->blocks_size == 0) {
     fprintf(stderr, "File header incomplete\n");
     return 1;
   }
@@ -191,120 +265,233 @@ static int readHeader(ZlineFile *zf) {
 }
 
 
-static void addLineInternal(ZlineFile *zf, u64 block_idx, u64 offset,
-                            u64 length) {
+static ZlineBlock *createBlock(int content_capacity, int line_capacity) {
+  ZlineBlock *b = (ZlineBlock*) calloc(1, sizeof(ZlineBlock));
+  assert(b);
+
+  if (content_capacity <= 0)
+    content_capacity = INITIAL_BLOCK_CAPACITY;
+  if (line_capacity <= 0)
+    line_capacity = INITIAL_LINE_CAPACITY;
+
+  linesInsureCapacity(b, line_capacity);
+  contentInsureCapacity(b, content_capacity);
+
+  return b;
+}
+
+
+static void freeBlock(ZlineBlock *b) {
+  if (!b) return;
+
+  free(b->lines);
+  free(b->content);
+  free(b);
+}
+
+
+static void addLineInternal(ZlineFile *zf, u64 length) {
   ZlineIndexLine *line;
+  ZlineBlock *b = zf->write_block;
+  assert(b);
   
-  linesInsureCapacity(zf, zf->line_count + 1);
-  line = zf->lines + zf->line_count;
-  line->block_idx = block_idx;
-  line->offset = offset;
+  linesInsureCapacity(b, b->lines_size + 1);
+  line = b->lines + b->lines_size;
+  line->offset = b->content_size;
   line->length = length;
+  if (b->lines_size == 0) {
+    b->first_line = zf->line_count;
+    if (b->idx > 0) zf->block_starts[b->idx-1] = zf->line_count;
+  }
 
   /*
   printf("line %d: block %d, offset %d, length %d\n",
          (int)zf->line_count, (int)block_idx, (int)line->offset,
          (int)line->length);
   */
-  
+
+  b->lines_size++;
   zf->line_count++;
+  zf->max_line_len = MAX(length, zf->max_line_len);
 }
 
 
-static int flushBlock(ZlineFile *zf) {
-  ZlineIndexBlock *block = zf->blocks + zf->block_count;
-  size_t write_len, compressed_len;
-  u64 next_block_start;
+static int useCompressedLineIndex
+(ZlineFile *zf, void **compressed_line_index, uint64_t *compressed_len) {
 
-  assert(block->offset > 0);
+  ZlineBlock *b = zf->write_block;
+  size_t result, array_size, buf_size;
+  char *buf;
 
-  /* if the block is empty, do nothing */
-  if (zf->inbuf_size == 0) return 0;
-  
-  block->decompressed_length = zf->inbuf_size;
+  assert(zf->compress_stream);
 
-  /* compress the block */
-  compressed_len = ZSTD_compress
-    (zf->outbuf, zf->outbuf_capacity, zf->inbuf, zf->inbuf_size,
-     ZSTD_COMPRESSION_LEVEL);
+  /* never compress blocks with less than two lines in them */
+  if (b->lines_size < 2) return 0;
 
-  /* check for errors */
-  if (ZSTD_isError(compressed_len)) {
-    fprintf(stderr, "Internal error compressing %d byte block into %d "
-            "byte buffer: %" PRIu64 "\n",
-            zf->inbuf_size, zf->outbuf_capacity, (u64) compressed_len);
-    return 1;
-  }
-  
-  block->compressed_length = compressed_len;
-  assert(block->compressed_length > 0);
-  zf->outbuf_size = block->compressed_length;
-  next_block_start = block->offset + block->compressed_length;
+  array_size = b->lines_size * sizeof(ZlineIndexLine);
+  buf_size = ZSTD_compressBound(array_size);
+  buf = (char*) malloc(buf_size);
+  assert(buf);
 
   /*
-  printf("block %" PRIu64 " %d bytes -> %d bytes\n", zf->block_count,
-         zf->inbuf_size, zf->outbuf_size);
+  result = ZSTD_compressCCtx(zf->compress_stream, buf, buf_size,
+                             b->lines, array_size, ZSTD_COMPRESSION_LEVEL);
   */
+  result = ZSTD_compress(buf, buf_size, b->lines, array_size,
+                         ZSTD_COMPRESSION_LEVEL);
+  
+  assert(!ZSTD_isError(result));
+
+  if (result + sizeof(uint64_t) < array_size) {
+    *compressed_line_index = buf;
+    *compressed_len = result;
+    return 1;
+  } else {
+    free(buf);
+    return 0;
+  }
+}
+
+
+/* Flush the current write_block. Return a pointer to the new write_block
+   (which may be the same one).
+   
+   What do the blocks and block_starts array look like with lines that span
+   multiple blocks?
+
+                 [a---] [----] [--.b-] [c.d-] [---.] [e--.]
+   block starts: 0      0      1       2      2      4
+
+
+*/
+static ZlineBlock* flushBlock(ZlineFile *zf) {
+  ZlineIndexBlock *block_idx = zf->blocks + (zf->blocks_size-1);
+  ZlineBlock *b = zf->write_block;
+  int64_t write_len, compressed_len, line_index_len;
+  u64 next_block_start, block_no;
+  void *compressed_line_index;
+  uint64_t compressed_line_index_len;
+  uint64_t compressed_line_index_flag = 0;
+
+  assert(b);
+  assert(b->offset > 0);
+
+  /* if there is no data in the block, do nothing */
+  if (b->content_size == 0) return b;
+
+  block_idx->offset = b->offset;
+  block_idx->decompressed_length = b->content_size;
+  if (b->idx > 0)
+    zf->block_starts[b->idx - 1] = b->first_line;
+
+  /* XXX expensive assert */
+  assert((u64)ftell(zf->fp) == b->offset);
+
+  if (b->lines_size == 0) {
+    line_index_len = 0;
+  } else {
+
+    /* Try compressing the line index. If it's smaller, leave the data
+       and its size in compressed_line_index and compressed_line_index_len,
+       respectively and return true. Otherwise, return false. */
+    if (useCompressedLineIndex(zf, &compressed_line_index,
+                               &compressed_line_index_len)) {
+      /* write 4-byte length of compressed line index */
+      write_len = fwrite(&compressed_line_index_len,
+                         sizeof compressed_line_index_len, 1, zf->fp);
+      if (write_len != 1) goto fail;
+
+      /* write compressed line index */
+      write_len = fwrite(compressed_line_index, 1, compressed_line_index_len,
+                         zf->fp);
+      if (write_len != compressed_line_index_len) goto fail;
+      free(compressed_line_index);
+    
+      line_index_len = (sizeof compressed_line_index_len) +
+        compressed_line_index_len;
+      compressed_line_index_flag = LINE_INDEX_COMPRESSED_FLAG;
+
+    } else {
+      /* write uncompressed line index */
+      write_len = fwrite(b->lines, sizeof(ZlineIndexLine), b->lines_size,
+                         zf->fp);
+      if (write_len != b->lines_size) goto fail;
+      line_index_len = sizeof(ZlineIndexLine) * b->lines_size;
+    }
+    
+  }
+  
+  /* compress the line contents */
+  compressed_len = compressToFile(zf, b->content, b->content_size);
+  if (compressed_len < 0) return b;
+  
+  assert(compressed_len > 0);
+  next_block_start = b->offset + line_index_len + compressed_len;
+  block_idx->compressed_length_x = compressed_len | compressed_line_index_flag;
 
   /* check we're at the expected offset in the file */
   /* XXX slow assert */
-  /* assert(ftell(zf->fp) == block->offset); */
-
-  /* write the compressed data to the file */
-  write_len = fwrite(zf->outbuf, 1, zf->outbuf_size, zf->fp);
-
-  /*
-  printf("block %d at %d, len %d\n", (int)zf->block_count,
-         (int)block->offset, (int)block->compressed_length);
-  */
+  assert(ftell(zf->fp) == next_block_start);
 
   /* move to the next block and initialize its offset */
-  blocksInsureCapacity(zf, zf->block_count + 2);
-  zf->block_count++;
-  zf->blocks[zf->block_count].offset = next_block_start;
-  zf->inbuf_size = 0;
+  /* XXX why +2? */
+  blocksInsureCapacity(zf, zf->blocks_size + 2);
+  block_no = zf->blocks_size;
+  zf->blocks_size++;
+  zf->blocks[block_no].offset = b->offset = next_block_start;
+  zf->blocks[block_no].decompressed_length = 0;
+  zf->blocks[block_no].compressed_length_x = 0;
+  zf->block_starts[block_no-1] = zf->line_count;
 
-  if (write_len != (size_t)zf->outbuf_size) {
-    fprintf(stderr, "Failed to write %d bytes to \"%s\" at offset "
-            "%" PRIu64 "\n", zf->outbuf_size, zf->filename,
-            zf->blocks[zf->block_count-1].offset);
-    return 1;
-  } else {
-    return 0;
-  }
+  b->idx = block_no;
+  b->lines_size = 0;
+  b->content_size = 0;
+
+  return b;
+
+ fail:
+  fprintf(stderr, "Error writing compressed block.\n");
+  return NULL;
 }
             
   
   
-/* length is the length of the line, and is optional. If 0, it will be
-   computed using strlen. */
+/* length is the length of the line, and is optional. If less than 0,
+   it will be computed using strlen. */
 ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line,
-                                    uint64_t length) {
+                                    int64_t length) {
+  ZlineBlock *b;
 
   if (zf->mode != ZLINE_MODE_CREATE) {
-    /* fprintf(stderr, "\"%s\" not opened for writing\n", zf->filename); */
     return -1;
   }
   
-  if (length == 0) length = strlen(line);
+  if (length < 0) length = strlen(line);
+  
+  b = zf->write_block;
+  assert(b);
 
   /* the line doesn't fit in the current block, flush the current block */
-  if (zf->inbuf_size + length > (u64)zf->inbuf_capacity) {
-    flushBlock(zf);
+  if (b->content_size + length > (u64)b->content_capacity) {
+    b = flushBlock(zf);
   }
 
   /* add an entry to the line index */
-  addLineInternal(zf, zf->block_count, zf->inbuf_size, length);
+  addLineInternal(zf, length);
 
-  while (length) {
-    uint64_t bite = MIN(length, (u64)(zf->inbuf_capacity - zf->inbuf_size));
-    memcpy(zf->inbuf + zf->inbuf_size, line, bite);
-    zf->inbuf_size += bite;
-    length -= bite;
-    line += bite;
-
-    if (length) flushBlock(zf);
-  }
+  if (length <= (u64)b->content_capacity) {
+    /* add the line to the content buffer */
+    memcpy(b->content + b->content_size, line, length);
+    b->content_size += length;
+  } else {
+    /* for really long lines, send them straight to disk */
+    char *content_buffer_saved = b->content;
+    assert(b->content_size == 0);
+    b->content = (char*) line;
+    b->content_size = length;
+    flushBlock(zf);
+    b->content = content_buffer_saved;
+  }    
 
   return 0;
 }
@@ -317,11 +504,16 @@ ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf) {
   u64 current_pos;
 
   if (zf->mode == ZLINE_MODE_READ) goto ok;
-  
-  if (zf->inbuf_size > 0)
-    flushBlock(zf);
 
-  current_pos = zf->blocks[zf->block_count].offset;
+  assert(zf->write_block);
+  assert(zf->write_block->idx == zf->blocks_size-1);
+  
+  if (zf->write_block->content_size > 0) {
+    flushBlock(zf);
+  }
+  zf->blocks_size--;
+    
+  current_pos = zf->write_block->offset;
   
   /* XXX slow assert */
   assert((u64)ftell(zf->fp) == current_pos);
@@ -338,64 +530,34 @@ ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf) {
 
   /* write the index */
   if (zf->is_index_compressed) {
-    u64 size_block_array = sizeof(ZlineIndexBlock) * zf->block_count;
-    u64 size_line_array = sizeof(ZlineIndexLine) * zf->line_count;
-    u64 size_block_array_compressed = 0, size_line_array_compressed = 0;
-    u64 buf_size = ZSTD_compressBound(MAX(size_line_array, size_block_array));
-    char *compressed_buf = (char*) malloc(buf_size);
-    size_t compress_result;
-
-    if (!compressed_buf) {
-      fprintf(stderr, "Out of memory compressing index\n");
-      goto fail;
-    }
+    u64 size_block_array_compressed, size_starts_array_compressed;
 
     /* fill in the compressed sizes later */
-    if (fseek(zf->fp, sizeof(u64)*2, SEEK_CUR)) goto fail;
+    if (fseek(zf->fp, sizeof(u64) * 2, SEEK_CUR)) goto fail;
 
-    /* compress the block array */
-    compress_result = ZSTD_compress(compressed_buf, buf_size, zf->blocks,
-                                    size_block_array, ZSTD_COMPRESSION_LEVEL);
-    if (ZSTD_isError(compress_result)) {
-      fprintf(stderr, "Error compressing block index\n");
-      goto fail;
-    }
+    /* write the block index */
+    size_block_array_compressed = compressToFile
+      (zf, zf->blocks, sizeof(ZlineIndexBlock) * zf->blocks_size);
 
-    /* write it to the file */
-    size_block_array_compressed = compress_result;
-    if (1 != fwrite(compressed_buf, size_block_array_compressed, 1, zf->fp))
-      goto fail;
-
-    /* compress the line array */
-    compress_result = ZSTD_compress(compressed_buf, buf_size, zf->lines,
-                                    size_line_array, ZSTD_COMPRESSION_LEVEL);
-    if (ZSTD_isError(compress_result)) {
-      fprintf(stderr, "Error compressing line index\n");
-      goto fail;
-    }
-
-    /* write it to the file */
-    size_line_array_compressed = compress_result;
-    if (1 != fwrite(compressed_buf, size_line_array_compressed, 1, zf->fp))
-      goto fail;
-
-    free(compressed_buf);
+    /* write the block_starts array */
+    size_starts_array_compressed = compressToFile
+      (zf, zf->block_starts, sizeof(u64) * (zf->blocks_size - 1));
 
     /* write the compressed sizes of the arrays */
     if (fseek(zf->fp, zf->index_offset, SEEK_SET)) goto fail;
     
     fwrite(&size_block_array_compressed, sizeof(u64), 1, zf->fp);
-    fwrite(&size_line_array_compressed, sizeof(u64), 1, zf->fp);
+    fwrite(&size_starts_array_compressed, sizeof(u64), 1, zf->fp);
   }
 
-  /* write uncompressed index */
+  /* write uncompressed block index */
   else {
-    if (zf->block_count != fwrite(zf->blocks, sizeof(ZlineIndexBlock),
-                                  zf->block_count, zf->fp))
+    if (zf->blocks_size != fwrite(zf->blocks, sizeof(ZlineIndexBlock),
+                                  zf->blocks_size, zf->fp))
       goto fail;
-
-    if (zf->line_count != fwrite(zf->lines, sizeof(ZlineIndexLine),
-                                 zf->line_count, zf->fp))
+    
+    if (zf->blocks_size-1 != fwrite(zf->block_starts, sizeof(u64),
+                                    zf->blocks_size - 1, zf->fp))
       goto fail;
   }
 
@@ -408,13 +570,7 @@ ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf) {
     fprintf(stderr, "Error writing index to \"%s\"\n", zf->filename);
  ok:
 
-  /* deallocate everything */
-  if (zf->fp) fclose(zf->fp);
-  free(zf->inbuf);
-  free(zf->outbuf);
-  free(zf->blocks);
-  free(zf->lines);
-  free(zf);
+  ZlineFile_deallocate(zf);
 }
 
 
@@ -425,55 +581,231 @@ static void blocksInsureCapacity(ZlineFile *zf, u64 capacity) {
     if (new_cap < capacity) new_cap = capacity;
     zf->blocks = (ZlineIndexBlock*) realloc
       (zf->blocks, sizeof(ZlineIndexBlock) * new_cap);
-    if (!zf->blocks) {
-      fprintf(stderr, "Out of memory allocating block array\n");
-      assert(0);
+    if (!zf->blocks) goto fail;
+    if (new_cap > 1) {
+      zf->block_starts = (uint64_t*) realloc
+        (zf->block_starts, sizeof(uint64_t) * (new_cap - 1));
+      if (!zf->block_starts) goto fail;
     }
     zf->blocks_capacity = new_cap;
   }
+
+  return;
+  
+ fail:
+  fprintf(stderr, "Out of memory allocating block array\n");
+  assert(0);
 }
 
   
-static void linesInsureCapacity(ZlineFile *zf, u64 capacity) {
-  u64 new_cap;
-  if (!zf->lines || zf->lines_capacity < capacity) {
-    new_cap = zf->lines_capacity * 2;
+static void linesInsureCapacity(ZlineBlock *b, int capacity) {
+  int new_cap;
+  if (!b->lines || b->lines_capacity < capacity) {
+    new_cap = b->lines_capacity * 2;
     if (new_cap < capacity) new_cap = capacity;
-    zf->lines = (ZlineIndexLine*) realloc
-      (zf->lines, sizeof(ZlineIndexLine) * new_cap);
-    if (!zf->lines) {
+    b->lines = (ZlineIndexLine*) realloc
+      (b->lines, sizeof(ZlineIndexLine) * new_cap);
+    if (!b->lines) {
       fprintf(stderr, "Out of memory allocating line array\n");
       assert(0);
     }
-    zf->lines_capacity = new_cap;
+    b->lines_capacity = new_cap;
   }
 }
+
+
+static void contentInsureCapacity(ZlineBlock *b, int capacity) {
+  int new_cap;
+  if (!b->content || b->content_capacity < capacity) {
+    new_cap = b->content_capacity * 2;
+    if (new_cap < capacity) new_cap = capacity;
+    b->content = (char*) realloc(b->content, new_cap);
+    if (!b->content) {
+      fprintf(stderr, "Out of memory allocating content array\n");
+      assert(0);
+    }
+    b->content_capacity = new_cap;
+  }
+}
+
+
+static void ZlineFile_deallocate(ZlineFile *zf) {
+  if (!zf) return;
+
+  if (zf->compress_stream)
+    ZSTD_freeCStream(zf->compress_stream);
+  if (zf->decompress_stream)
+    ZSTD_freeDStream(zf->decompress_stream);
+  if (zf->fp) fclose(zf->fp);
+  freeBlock(zf->write_block);
+  freeBlock(zf->read_block);
+  free(zf->blocks);
+  free(zf->block_starts);
+  free(zf->filename);
+  free(zf);
+}
+
+
+static int flushOutbuf(ZlineFile *zf, ZSTD_outBuffer *outbuf,
+                       int64_t *bytes_written) {
+  size_t write_len;
+
+  write_len = fwrite(outbuf->dst, 1, outbuf->pos, zf->fp);
+  if (write_len != outbuf->pos) {
+    fprintf(stderr, "Failed to write to \"%s\"\n", zf->filename);
+    return 1;
+  } else {
+    *bytes_written += write_len;
+    outbuf->pos = 0;
+    return 0;
+  }
+}
+
+
+/* Return the number of compressed bytes written to zf->fp */
+static int64_t compressToFile(ZlineFile *zf, const void *input,
+                              int64_t input_len) {
+  unsigned char buf[COMPRESS_TO_FILE_BUFFER_SIZE];
+  ZSTD_outBuffer outbuf;
+  ZSTD_inBuffer inbuf;
+  size_t write_len;
+  int64_t bytes_written = 0;
+
+  /* make sure the input data is not larger than a size_t can represent */
+  assert(input_len <= SIZE_MAX);
+  assert(zf->compress_stream);
+
+  if (input_len == 0) return 0;
+
+  inbuf.src = input;
+  inbuf.size = input_len;
+  inbuf.pos = 0;
+
+  outbuf.dst = buf;
+  outbuf.size = sizeof buf;
+  outbuf.pos = 0;
+
+  ZSTD_initCStream(zf->compress_stream, ZSTD_COMPRESSION_LEVEL);
+
+  while (inbuf.pos < inbuf.size) {
+    ZSTD_compressStream(zf->compress_stream, &outbuf, &inbuf);
+
+    /* either the input data has been fully processed or
+       the output buffer is full */
+    assert(inbuf.pos == inbuf.size || outbuf.pos == outbuf.size);
+
+    /* only flush the output buffer if it is full, because the last bit
+       can probably be flushed along with the end-of-stream data. */
+    if (outbuf.pos == outbuf.size)
+      if (flushOutbuf(zf, &outbuf, &bytes_written)) return -1;
+  }
+
+  while (1) {
+    write_len = ZSTD_endStream(zf->compress_stream, &outbuf);
+    if (ZSTD_isError(write_len)) {
+      fprintf(stderr, "Error writing compressed data\n");
+      assert(write_len == 0);
+    }
+    if (write_len == 0) break;
+    if (flushOutbuf(zf, &outbuf, &bytes_written)) return -1;
+  }
+
+  assert(write_len == 0);
+
+  if (outbuf.pos > 0)
+    flushOutbuf(zf, &outbuf, &bytes_written);
+  
+  return bytes_written;
+}
+
+
+/* return # of bytes written to readbuf */
+static int64_t decompressFromFile
+(ZlineFile *zf, void *readbuf, int64_t readbuf_len, int64_t compressed_len) {
+
+  unsigned char buf[COMPRESS_TO_FILE_BUFFER_SIZE];
+  ZSTD_outBuffer outbuf;
+  ZSTD_inBuffer inbuf;
+  size_t to_read, bytes_read, result;
+  int64_t input_remaining = compressed_len;
+
+  /* make sure the input data is not larger than a size_t can represent */
+  assert(compressed_len <= SIZE_MAX);
+  assert(zf->decompress_stream);
+
+  if (compressed_len == 0) return 0;
+
+  inbuf.src = buf;
+  inbuf.size = 0;
+  inbuf.pos = 0;
+
+  outbuf.dst = readbuf;
+  outbuf.size = readbuf_len;
+  outbuf.pos = 0;
+  
+  ZSTD_initDStream(zf->decompress_stream);
+
+  /* Stop if all compressed data has been read or readbuf is full.
+     If readbuf fills up before all the content has been decompressed,
+     it's the caller's problem. */
+  while (input_remaining > 0 && outbuf.pos < outbuf.size) {
+
+    /* move unconsumed input data to the top of the buffer */
+    if (inbuf.pos < inbuf.size) {
+      memmove(buf, buf + inbuf.pos, inbuf.size - inbuf.pos);
+    }              
+    inbuf.size -= inbuf.pos;
+    inbuf.pos = 0;
+
+    /* read a chunk of data */
+    to_read = MIN(sizeof buf - inbuf.size, input_remaining);
+    bytes_read = fread(buf + inbuf.size, 1, to_read, zf->fp);
+    if (bytes_read != to_read) {
+      fprintf(stderr, "Failed to read from \"%s\"\n", zf->filename);
+      return 0;
+    }
+    inbuf.size += bytes_read;
+    input_remaining -= bytes_read;
+
+    /* decompress */
+    result = ZSTD_decompressStream(zf->decompress_stream, &outbuf, &inbuf);
+    if (ZSTD_isError(result)) {
+      fprintf(stderr, "Error decompressing data from \"%s\"\n",
+              zf->filename);
+      return 0;
+    }
+  }
+
+  return outbuf.pos;
+}
+  
 
 
 /* Open an existing zlines file for reading. */
 ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
   ZlineFile *zf = (ZlineFile*) calloc(1, sizeof(ZlineFile));
   size_t read_len;
-  u64 max_c = 0, max_dc = 0, file_size;
-  ZlineIndexBlock *block;
+  u64 file_size, block_idx;
+  int64_t bytes_read;
+  int max_content_len = 0, max_line_count = 0;
   
   assert(zf);
 
-  zf->filename = filename;
+  zf->filename = strdup(filename);
   zf->mode = ZLINE_MODE_READ;
-  zf->outbuf_idx = UINT64_MAX;
 
   file_size = getFileSize(filename);
   
   zf->fp = fopen(filename, "rb");
   if (!zf->fp) goto fail;
 
+  zf->decompress_stream = ZSTD_createDStream();
+
   /* read the header */
   if (readHeader(zf)) goto fail;
 
   /* allocate space for the index */
-  blocksInsureCapacity(zf, zf->block_count);
-  linesInsureCapacity(zf, zf->line_count);
+  blocksInsureCapacity(zf, zf->blocks_size);
 
   if (fseek(zf->fp, zf->index_offset, SEEK_SET)) goto fail;
 
@@ -482,8 +814,7 @@ ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
   if (zf->is_index_compressed) {
     /* [0]: block array, [1]: line array */
     u64 compressed_sizes[2];
-    char *compressed_buf;
-    size_t dc_result, array_size;
+
     if (2 != fread(compressed_sizes, sizeof(u64), 2, zf->fp)) goto fail;
 
     if (zf->index_offset + compressed_sizes[0] >= file_size ||
@@ -494,75 +825,50 @@ ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
       goto fail;
     }
 
-    compressed_buf = (char*) malloc(MAX(compressed_sizes[0],
-                                        compressed_sizes[1]));
-    if (!compressed_buf) {
-      fprintf(stderr, "Out of memory reading compressed index\n");
-      goto fail;
-    }
-
     /* read the compressed block index */
-    if (1 != fread(compressed_buf, compressed_sizes[0], 1, zf->fp)) goto fail;
-
-    /* decompress the block index */
-    array_size = zf->block_count * sizeof(ZlineIndexBlock);
-    dc_result = ZSTD_decompress
-      (zf->blocks, array_size, compressed_buf, compressed_sizes[0]);
-    if (ZSTD_isError(dc_result) || dc_result != array_size) {
-      fprintf(stderr, "Error decompressing block index\n");
+    bytes_read = decompressFromFile
+      (zf, zf->blocks, zf->blocks_size * sizeof(ZlineIndexBlock),
+       compressed_sizes[0]);
+    if (bytes_read != zf->blocks_size * sizeof(ZlineIndexBlock))
       goto fail;
-    }
-    
-    /* read the compressed line index */
-    if (1 != fread(compressed_buf, compressed_sizes[1], 1, zf->fp)) goto fail;
 
-    /* decompress the line index */
-    array_size = zf->line_count * sizeof(ZlineIndexLine);
-    dc_result = ZSTD_decompress
-      (zf->lines, array_size, compressed_buf, compressed_sizes[1]);
-    if (ZSTD_isError(dc_result) || dc_result != array_size) {
-      fprintf(stderr, "Error decompressing line index\n");
+    /* read the compressed line starts */
+    bytes_read = decompressFromFile
+      (zf, zf->block_starts, (zf->blocks_size-1) * sizeof(u64),
+       compressed_sizes[1]);
+    if (bytes_read != (zf->blocks_size-1) * sizeof(u64))
       goto fail;
-    }
-
-    free(compressed_buf);
   }
 
   /* read uncompressed index */
   else {
-    read_len = fread(zf->blocks, sizeof(ZlineIndexBlock), zf->block_count,
+    read_len = fread(zf->blocks, sizeof(ZlineIndexBlock), zf->blocks_size,
                      zf->fp);
-    if (read_len != zf->block_count) goto fail;
+    if (read_len != zf->blocks_size) goto fail;
     
-    read_len = fread(zf->lines, sizeof(ZlineIndexLine), zf->line_count,
-                     zf->fp);
-    if (read_len != zf->line_count) goto fail;
+    read_len = fread(zf->block_starts, sizeof(u64), zf->blocks_size-1, zf->fp);
+    if (read_len != zf->blocks_size - 1) goto fail;
   }
 
-  /* scan the index to find the largest compressed and decompressed blocks */
-  for (block = zf->blocks; block < zf->blocks + zf->block_count; block++) {
-    max_c = MAX(max_c, block->compressed_length);
-    max_dc = MAX(max_dc, block->decompressed_length);
+  /* scan the index to find the largest content */
+  for (block_idx = 0; block_idx < zf->blocks_size; block_idx++) {
+    max_content_len = MAX(max_content_len,
+                          zf->blocks[block_idx].decompressed_length);
+    max_line_count = MAX(max_line_count, getBlockLineCount(zf, block_idx));
   }
 
-  zf->inbuf = (char*) malloc(max_c);
-  zf->outbuf = (char*) malloc(max_dc);
-  if (!zf->inbuf || !zf->outbuf) {
+  zf->read_block = createBlock(max_content_len, max_line_count);
+  if (!zf->read_block) {
     fprintf(stderr, "Out of memory opening file\n");
     goto fail;
   }
-  zf->inbuf_capacity = max_c;
-  zf->outbuf_capacity = max_dc;
+  zf->read_block->idx = -1;
   
   return zf;
 
  fail:
-  if (zf->fp) fclose(zf->fp);
-  free(zf->inbuf);
-  free(zf->outbuf);
-  free(zf->blocks);
-  free(zf->lines);
-  free(zf);
+  ZlineFile_deallocate(zf);
+
   return NULL;
 }
 
@@ -574,60 +880,196 @@ ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf) {
 
 /* Returns the length of the given line. */
 ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
+  ZlineIndexLine *line;
+  ZlineBlock *block;
+  
   if (line_idx >= zf->line_count)
     return -1;
-  else
-    return zf->lines[line_idx].length;
+
+  loadLine(zf, line_idx, &line, &block);
+  assert(line);
+  
+  return line->length;
 }
 
 /* Returns the length of the longest line. */
 ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf) {
-  u64 i, max_len = 0;
-  for (i=0; i < zf->line_count; i++)
-    max_len = MAX(max_len, zf->lines[i].length);
-  return max_len;
+  return zf->max_line_len;
 }
 
-/* read a block, decompress it, store the decompressed result in outbuf,
-   store the decompressed size in outbuf_size, and store the index of the block
-   in outbuf_idx. */
-static int getBlock(ZlineFile *zf, u64 block_idx) {
+
+/* returns the index of the block containing this line */
+static u64 getLineBlock(ZlineFile *zf, u64 line_idx) {
+  /* linear scan */
+  if (zf->blocks_size <= 1) {
+    return 0;
+  } else {
+    u64 i;
+    for (i=0; i < zf->blocks_size-1; i++) {
+      if (line_idx <= zf->block_starts[i]) {
+        if (line_idx == zf->block_starts[i])
+          return i+1;
+        else
+          return i;
+      }
+    }
+    return i;
+  }
+}
+
+
+/* Make sure a line is in memory.
+   Set *block to the either zf->write_block or zf->read_block, whichever
+   contains the line.
+   Set *line to point to the record of its offset and length.
+   If the line isn't in memory, the block containing it will
+   be loaded into zf->read_block.
+*/
+static int loadLine(ZlineFile *zf, u64 line_idx, ZlineIndexLine **line,
+                    ZlineBlock **block) {
+  u64 block_idx;
+
+  /* check if the line is in the write block */
+  if (zf->mode == ZLINE_MODE_CREATE) {
+    *line = lineInBlock(zf->write_block, line_idx);
+    if (*line) {
+      *block = zf->write_block;
+      return 0;
+    }
+  }
+
+  /* check if it's in the read block */
+  *line = lineInBlock(zf->read_block, line_idx);
+  if (*line) {
+    *block = zf->read_block;
+    return 0;
+  }
+
+  /* load the block containing the line into the read block */
+  block_idx = getLineBlock(zf, line_idx);
+  readBlock(zf, block_idx);
+  *line = lineInBlock(zf->read_block, line_idx);
+  assert(*line);
+  *block = zf->read_block;
+
+  return 0;
+}
+
+
+static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx) {
+  if (block &&
+      block->lines_size > 0 &&
+      line_idx >= block->first_line &&
+      line_idx < block->first_line + block->lines_size)
+    return block->lines + (line_idx - block->first_line);
+  else
+    return NULL;
+}
+
+
+/* Returns the number of lines stored in this block. */
+static int getBlockLineCount(ZlineFile *zf, u64 block_idx) {
+  u64 block_start, block_end;
+
+  block_start = (block_idx == 0)
+    ? 0
+    : zf->block_starts[block_idx-1];
+  block_end = (block_idx == zf->blocks_size-1)
+    ? zf->line_count
+    : zf->block_starts[block_idx];
+
+  return block_end - block_start;
+}
+
+
+
+
+/* Read a block, store the decompressed result in zf->read_block.
+   Return nonzero on error. 
+   If the data is larger than a normal block, just read the line index.
+*/
+static int readBlock(ZlineFile *zf, u64 block_idx) {
   ZlineIndexBlock *block;
-  size_t dc_len;
-  assert(zf->mode == ZLINE_MODE_READ);
-  assert(block_idx < zf->block_count);
+  ZlineBlock *b;
+  int block_line_count;
+  int64_t line_bytes, bytes_read;
+
+  assert(block_idx < zf->blocks_size);
 
   /* check if we already have this block decompressed */
-  if (block_idx == zf->outbuf_idx) return 0;
+  if (zf->read_block && block_idx == zf->read_block->idx) {
+    return 0;
+  }
+
+  if (!zf->decompress_stream)
+    zf->decompress_stream = ZSTD_createDStream();
 
   block = zf->blocks + block_idx;
+
+  /* compute the number of lines in this block */
+  block_line_count = getBlockLineCount(zf, block_idx);
+
+  /* allocate zf->read_block if needed, otherwise make sure its
+     content and line arrays are big enough */
+  if (!zf->read_block) {
+    zf->read_block = createBlock(block->decompressed_length, block_line_count);
+  } else {
+    linesInsureCapacity(zf->read_block, block_line_count);
+  }
+
+  b = zf->read_block;
+  b->idx = block_idx;
+  b->offset = block->offset;
+  b->first_line = (block_idx == 0) ? 0 : zf->block_starts[block_idx-1];
+
+  zf->fseek_flag = 1;
   if (fseek(zf->fp, block->offset, SEEK_SET)) {
     fprintf(stderr, "Failed to seek to block %" PRIu64 " offset %" PRIu64 "\n",
             block_idx, block->offset);
     return 1;
   }
 
-  assert((u64)zf->inbuf_capacity >= block->compressed_length);
-  assert((u64)zf->outbuf_capacity >= block->decompressed_length);
+  b->lines_size = block_line_count;
+  line_bytes = b->lines_size * sizeof(ZlineIndexLine);
 
-  if (1 != fread(zf->inbuf, block->compressed_length, 1, zf->fp)) {
-    fprintf(stderr, "Failed to read block %" PRIu64 "\n", block_idx);
-    return 1;
-  }
-  zf->inbuf_size = block->compressed_length;
+  /* Read line index */
+  if (isBlockLineIndexCompressed(block)) {
+    uint64_t compressed_index_len;
+    if (1 != fread(&compressed_index_len, sizeof compressed_index_len, 1,
+                   zf->fp))
+      goto fail;
 
-  dc_len = ZSTD_decompress(zf->outbuf, zf->outbuf_capacity,
-                           zf->inbuf, zf->inbuf_size);
-  if (dc_len != block->decompressed_length) {
-    fprintf(stderr, "Decompression error block %" PRIu64 ": "
-            "expected %" PRIu64 " bytes, got %" PRIu64 "\n",
-            block_idx, block->decompressed_length, (u64) dc_len);
-    return 1;
+    b->line_index_size = compressed_index_len;
+
+    bytes_read = decompressFromFile(zf, b->lines, line_bytes,
+                                    compressed_index_len);
+  } else {
+    b->line_index_size = line_bytes;
+    bytes_read = fread(b->lines, 1, line_bytes, zf->fp);
   }
-  zf->outbuf_size = block->decompressed_length;
-  zf->outbuf_idx = block_idx;
+  if (bytes_read != line_bytes)
+    goto fail;
+
+  /* If the block is small enough, decompress it all into memory now.
+     If it's large, don't load the content into memory. */
+  if (block->decompressed_length > MAX_IN_MEMORY_BLOCK) {
+    b->content_size = 0;
+  } else {
+    contentInsureCapacity(zf->read_block, block->decompressed_length);
+
+    /* Read compressed content */
+    b->content_size = block->decompressed_length;
+    bytes_read = decompressFromFile(zf, b->content, b->content_size,
+                                    getBlockCompressedLen(block));
+    if (bytes_read != b->content_size)
+      goto fail;
+  }
 
   return 0;
+
+fail:
+  fprintf(stderr, "Failed to read block %" PRIu64 "\n", block_idx);
+  return 1;
 }
 
 
@@ -645,21 +1087,29 @@ static int getBlock(ZlineFile *zf, u64 block_idx) {
 ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
                                       char *buf) {
   ZlineIndexLine *line;
-  u64 file_pos = 0;
-  char *result = NULL;
-  u64 length_extracted = 0, block_idx, offset_in_block;
+  ZlineBlock *block;
+  int64_t file_pos = -1;
+  char *result;
 
   assert(zf);
 
-  /* save my place in the file if the file is currently being written */
-  if (zf->mode == ZLINE_MODE_CREATE)
-    file_pos = ftell(zf->fp);
+  if (line_idx >= zf->line_count) return NULL;
+
+  zf->fseek_flag = 0;
+
+  /* save the file position in case we need to return to it */
+  if (zf->mode == ZLINE_MODE_CREATE) {
+    assert(zf->write_block);
+    file_pos = zf->write_block->offset;
+    /* XXX expensive assert */
+    assert(file_pos == ftell(zf->fp));
+  }
   
-  if (line_idx >= zf->line_count) goto fail;
+  /* Load the block containing this line, either into write_block
+     or read_block. */
+  loadLine(zf, line_idx, &line, &block);
 
-  /* keep a pointer to the line record */
-  line = zf->lines + line_idx;
-
+  /* allocate an output buffer if necessary, and point result at it */
   if (buf) {
     result = buf;
   } else {
@@ -671,26 +1121,38 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
     }
   }
 
-  /* this is the block in which the line begins */
-  block_idx = line->block_idx;
-  offset_in_block = line->offset;
+  if (line->length > 0) {
+    
+    /* If the line was loaded into memory, copy it to the result buffer */
+    if (block->content_size > 0) {
+      memcpy(result, block->content + line->offset, line->length);
+    }
 
-  /* loop until the full line is extracted */
-  for (block_idx = line->block_idx; length_extracted < line->length;
-       block_idx++) {
-    u64 length_in_this_block;
-
-    /* read and decompress the block containing this line */
-    if (getBlock(zf, block_idx)) goto fail;
-
-    length_in_this_block = MIN(zf->outbuf_size - offset_in_block, 
-                               line->length - length_extracted);
-
-    memcpy(result + length_extracted, zf->outbuf + offset_in_block,
-           length_in_this_block);
-    length_extracted += length_in_this_block;
-    offset_in_block = 0;
+    /* if the line was long, loadLine will leave it on disk. Decompress
+       it straight to the buffer. */
+    else {
+      ZlineIndexBlock *index_block;
+      i64 compressed_len, decompressed_len;
+      assert(block->lines_size == 1);
+      assert(block == zf->read_block);
+      assert(zf->blocks_size > block->idx);
+      
+      index_block = zf->blocks + block->idx;
+      assert(index_block->offset == block->offset);
+      assert(!isBlockLineIndexCompressed(index_block));
+      
+      fseek(zf->fp, block->offset + block->line_index_size, SEEK_SET);
+      compressed_len = getBlockCompressedLen(index_block);
+      decompressed_len = decompressFromFile(zf, result, line->length,
+                                            compressed_len);
+      if (decompressed_len != line->length) {
+        fprintf(stderr, "Failed to decompress line %" PRIu64 " from file\n",
+                line_idx);
+        goto fail;
+      }
+    }
   }
+
   result[line->length] = 0;
 
   goto ok;
@@ -699,7 +1161,7 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
   if (result != buf) free(result);
 
  ok:
-  if (zf->mode == ZLINE_MODE_CREATE)
+  if (zf->fseek_flag && file_pos != -1)
     fseek(zf->fp, file_pos, SEEK_SET);
   
   return result;
@@ -711,24 +1173,26 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
    count by one. */
 ZLINE_EXPORT uint64_t ZlineFile_get_block_count(ZlineFile *zf) {
   assert(zf);
-  return zf->block_count;
+  return zf->blocks_size;
 }
 
 
-/* Fetches the compressed and decompressed size of the given block.
-   If block_idx is invalid, returns -1.
-   Returns 0 on success. */
-ZLINE_EXPORT int ZlineFile_get_block_size(ZlineFile *zf, uint64_t block_idx,
-                                          uint64_t *compressed_length,
-                                          uint64_t *decompressed_length) {
+/* Fetches the decompressed size of the given block.
+   If block_idx is invalid, returns 0. */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_size_original
+(ZlineFile *zf, uint64_t block_idx) {
   assert(zf);
+  if (block_idx >= zf->blocks_size) return 0;
+  return zf->blocks[block_idx].decompressed_length;
+}
 
-  if (block_idx >= zf->block_count) return -1;
-  ZlineIndexBlock *block = zf->blocks + block_idx;
 
-  *compressed_length = block->compressed_length;
-  *decompressed_length = block->decompressed_length;
-
-  return 0;
+/* Fetches the compressed size of the given block.
+   If block_idx is invalid, returns 0. */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_size_compressed
+(ZlineFile *zf, uint64_t block_idx) {
+  assert(zf);
+  if (block_idx >= zf->blocks_size) return 0;
+  return getBlockCompressedLen(zf->blocks + block_idx);
 }
 

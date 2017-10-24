@@ -1,6 +1,12 @@
 #!/usr/bin/python
 
-"""Python wrapper for zlines API.
+"""
+Python wrapper for zlines API.
+
+https://github.com/oshkosher/bioio/tree/master/zlines
+
+Ed Karrels, ed.karrels@gmail.com, January 2017
+
 
 Sample usage:
 
@@ -67,7 +73,7 @@ zlineslib = cdll.LoadLibrary(libname)
 
 # create a new file
 ZlineFile_create = zlineslib.ZlineFile_create
-ZlineFile_create.argtypes = [c_char_p, c_int]
+ZlineFile_create.argtypes = [c_char_p, c_longlong]
 ZlineFile_create.restype = c_void_p
 
 # open an existing file
@@ -104,11 +110,15 @@ ZlineFile_get_block_count = zlineslib.ZlineFile_get_block_count
 ZlineFile_get_block_count.argtypes = [c_void_p]
 ZlineFile_get_block_count.restype = c_ulonglong
 
-# get internal data block size, returns (compressed_len, decompressed_len)
-ZlineFile_get_block_size = zlineslib.ZlineFile_get_block_size
-ZlineFile_get_block_size.argtypes = [c_void_p, c_ulonglong,
-                                     POINTER(c_ulonglong), POINTER(c_ulonglong)]
-ZlineFile_get_block_size.restype = c_int
+# get internal data block size, before compression
+ZlineFile_get_block_size_original = zlineslib.ZlineFile_get_block_size_original
+ZlineFile_get_block_size_original.argtypes = [c_void_p, c_ulonglong]
+ZlineFile_get_block_size_original.restype = c_ulonglong
+
+# get internal data block size, after compression
+ZlineFile_get_block_size_compressed = zlineslib.ZlineFile_get_block_size_compressed
+ZlineFile_get_block_size_compressed.argtypes = [c_void_p, c_ulonglong]
+ZlineFile_get_block_size_compressed.restype = c_ulonglong
 
 # close a file (from either ZlineFile_create or ZlineFile_read)
 ZlineFile_close = zlineslib.ZlineFile_close
@@ -173,7 +183,7 @@ class zline_file:
     if self._encoding:
       line = line.encode(self._encoding)
 
-    result = ZlineFile_add_line(self._file, line, 0)
+    result = ZlineFile_add_line(self._file, line, -1)
     if result == -1:
       raise RuntimeError('File is opened for reading')
 
@@ -247,10 +257,11 @@ class zline_file:
     Raises IndexError if block_no is invalid.
     """    
 
-    cs = c_ulonglong()
-    ds = c_ulonglong()
-    if ZlineFile_get_block_size(self._file, block_no, byref(cs), byref(ds)) < 0:
+    if block_no < 0 or block_no >= ZlineFile_get_block_count(self._file):
       raise IndexError
+    
+    cs = ZlineFile_get_block_size_compressed(self._file, block_no);
+    ds = ZlineFile_get_block_size_original(self._file, block_no);
 
     return (int(cs.value), int(ds.value))
 

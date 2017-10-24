@@ -1,3 +1,9 @@
+/*
+  A set of common useful functions and macros.
+
+  Ed Karrels, ed.karrels@gmail.com, April 2012
+*/  
+
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
