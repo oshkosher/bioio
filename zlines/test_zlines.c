@@ -10,7 +10,7 @@
 
 #define FILENAME "test_zlines.out"
 
-int test_add_one() {
+void test_add_one() {
   char *p, buf[100] = {0};
   ZlineFile *z;
 
@@ -54,7 +54,7 @@ int test_add_one() {
 
   ZlineFile_close(z);
 
-  return 0;
+  putchar('.'); fflush(stdout);
 }
 
 
@@ -99,6 +99,7 @@ void test_add_some() {
   assert(!strcmp("gonzo", ZlineFile_get_line(z, 3, buf)));
 
   ZlineFile_close(z);
+  putchar('.'); fflush(stdout);
 }
 
 
@@ -128,7 +129,36 @@ void test_blocks() {
   assert(!strcmp("one more", ZlineFile_get_line(z, 2, buf)));
 
   ZlineFile_close(z);
+
+  putchar('.'); fflush(stdout);
 }
+
+
+void test_long_line() {
+  ZlineFile *z;
+  const char *s1 = "this has 11";
+  const char *s2 = "this is 50 chars..............................long";
+  char buf[100];
+
+  z = ZlineFile_create(FILENAME, 20);
+
+  ZlineFile_add_line(z, s1, 11);
+  ZlineFile_add_line(z, s2, 50);
+
+  assert(!strcmp(s1, ZlineFile_get_line(z, 0, buf)));
+  assert(!strcmp(s2, ZlineFile_get_line(z, 1, buf)));
+  assert(!strcmp(s1, ZlineFile_get_line(z, 0, buf)));
+
+  ZlineFile_close(z);
+
+  z = ZlineFile_read(FILENAME);
+
+  assert(!strcmp(s1, ZlineFile_get_line(z, 0, buf)));
+  assert(!strcmp(s2, ZlineFile_get_line(z, 1, buf)));
+  assert(!strcmp(s1, ZlineFile_get_line(z, 0, buf)));
+  ZlineFile_close(z);
+  
+}  
   
 
 int main() {
@@ -136,6 +166,7 @@ int main() {
   test_add_one();
   test_add_some();
   test_blocks();
+  test_long_line();
   remove(FILENAME);
 
   printf("ok\n");

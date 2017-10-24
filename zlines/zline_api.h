@@ -19,7 +19,8 @@
 #include "zstd.h"
 
 
-/* One block of lines */
+/* This the entry for one block of data when the block isn't necessarily
+   in memory. */
 typedef struct ZlineIndexBlock {
   /* Offset, from the beginning of the file, where the compressed form
      of this block can be found.
@@ -31,10 +32,10 @@ typedef struct ZlineIndexBlock {
      Also, the most significant bit will be set iff the line index
      for this block is compressed.
   */
-  uint32_t compressed_length_x;
+  uint64_t compressed_length_x;
   
   /* Length of this block when decompressed. */
-  uint32_t decompressed_length;
+  uint64_t decompressed_length;
 
 } ZlineIndexBlock;
 
@@ -56,6 +57,7 @@ typedef struct ZlineIndexLine {
 } ZlineIndexLine;
 
 
+/* This represents a block of data that is in memory. */
 typedef struct ZlineBlock {
   /* index of this block */
   int64_t idx;
@@ -64,12 +66,6 @@ typedef struct ZlineBlock {
      of this block can be found.
   */
   uint64_t offset;
-
-  /* Length of the compressed form of this block. */
-  /* uint32_t compressed_length; */
-  
-  /* Length of this block when decompressed. */
-  /* uint32_t decompressed_length; */
 
   /* Index of the first line that starts in this block,
      which is lines[0]. */
@@ -81,7 +77,13 @@ typedef struct ZlineBlock {
 
   /* contents of the lines stored in this block */
   char *content;
-  int content_size, content_capacity;
+  int64_t content_size, content_capacity;
+
+  /* Number of bytes used to encode the line index, which may be compressed
+     or not. The compressed content is stored at offset + line_index_size.
+     Set by loadLine().
+  */
+  uint64_t line_index_size;
 
 } ZlineBlock;
 
