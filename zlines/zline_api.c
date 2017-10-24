@@ -1036,7 +1036,8 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
 
   /* If the block is small enough, decompress it all into memory now.
      If it's large, don't load the content into memory. */
-  if (block->decompressed_length > MAX_IN_MEMORY_BLOCK) {
+  if (block_line_count == 1 &&
+      block->decompressed_length > MAX_IN_MEMORY_BLOCK) {
     b->content_size = 0;
   } else {
     contentInsureCapacity(zf->read_block, block->decompressed_length);
