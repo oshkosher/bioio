@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <errno.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -37,6 +38,13 @@ enum ProgramMode {PROG_CREATE, PROG_DETAILS, PROG_VERIFY, PROG_GET,
                   PROG_PRINT};
 
 typedef uint64_t u64;
+typedef int64_t i64;
+
+
+typedef struct {
+  i64 start, end, step;
+  int has_start, has_end;
+} Range;
 
 
 typedef struct {
@@ -46,8 +54,10 @@ typedef struct {
   const char *output_filename;
 
   /* used in "get" mode */
-  u64 *line_numbers;
+  Range *line_numbers;
   int line_number_count;
+
+  /* used in "details" mode */
   int flag_blocks, flag_lines;
 } Options;
 
@@ -62,6 +72,9 @@ int fileDetails(Options *opt);
 int verifyFile(Options *opt);
 int getLines(Options *opt);
 int printLines(Options *opt);
+
+/* Return nonzero on error */
+int parseRange(Range *r, const char *s);
 
 
 int main(int argc, char **argv) {
@@ -185,17 +198,14 @@ int parseArgs(int argc, char **argv, Options *opt) {
     opt->input_filename = argv[argno++];
 
     opt->line_number_count = argc - argno;
-    opt->line_numbers = (u64*) malloc(sizeof(u64) * opt->line_number_count);
+    opt->line_numbers = (Range*) malloc(sizeof(Range) * opt->line_number_count);
     assert(opt->line_numbers);
 
-    i = 0;
-    while(argno < argc) {
-      if (1 != sscanf(argv[argno], "%" SCNu64, &opt->line_numbers[i])) {
-        fprintf(stderr, "Invalid line number \"%s\"\n", argv[argno]);
+    for (i=0; argno < argc; argno++,i++) {
+      if (parseRange(&opt->line_numbers[i], argv[argno])) {
+        fprintf(stderr, "Invalid line number range \"%s\"\n", argv[argno]);
         return 1;
       }
-      argno++;
-      i++;
     }
   }
   
@@ -228,6 +238,99 @@ void printHelp(void) {
           "    extracts the given lines from the file and prints them\n"
           "\n");
   exit(1);
+}
+
+
+const char *skipWhitespace(const char *p) {
+  while (isspace(*p)) p++;
+  return p;
+}
+
+
+int isNumber(char c) {
+  return isdigit(c) || c=='-' || c=='+';
+}
+
+
+/* Parse number ranges like Python's array slicing:
+   23       just line 23
+   10:100   lines [10..100)
+   10:      from line 10 to the end
+   :100     first 100 lines
+   0-20:2   line [0..20), skipping by 2: 0, 2, 4, ... 18
+   -1       last line
+   -10:     last 10 lines
+   5:-3     all but the first 5 and last 3 lines
+   :        full range (start=0, has_end=0, step=1)
+   ::2      full range, every other element
+
+   Return nonzero on error. */
+int parseRange(Range *r, const char *s) {
+  int consumed;
+  const char *p = skipWhitespace(s);
+
+  r->start = r->end = 0;
+  r->has_start = r->has_end = 0;
+  r->step = 1;
+
+  /* parse start */
+  if (isNumber(*p)) {
+    r->has_start = 1;
+    if (1 != sscanf(p, "%" SCNi64 "%n", &r->start, &consumed))
+      return 1;
+    p += consumed;
+    p = skipWhitespace(p);
+  }
+
+  /* expecting end of string or the colon after r->start */
+  if (*p == 0) {
+    if (r->has_start) {
+      /* just a number, like "12" */
+      /* special case: with a single value, set step to 0 */
+      r->step = 0;
+      return 0;
+    } else {
+      return 1;
+    }
+  } else if (*p == ':') {
+    p++;
+    p = skipWhitespace(p);
+  } else {
+    return 1;
+  }
+
+  /* expecting end of string, the colon after r->end, or a number for r->end */
+  if (isNumber(*p)) {
+    if (1 != sscanf(p, "%" SCNi64 "%n", &r->end, &consumed))
+      return 1;
+    p += consumed;
+    p = skipWhitespace(p);
+    r->has_end = 1;
+  }
+
+  /* expecting end of string or the colon after r->end */
+  if (*p == 0) {
+    return 0;
+  } else if (*p == ':') {
+    p++;
+    p = skipWhitespace(p);
+  }
+
+  /* expecting end of string or r->step */
+
+  if (isNumber(*p)) {
+    if (1 != sscanf(p, "%" SCNi64 "%n", &r->step, &consumed))
+      return 1;
+    p += consumed;
+    p = skipWhitespace(p);
+  }
+
+  /* expecting end of string */
+  if (*p == 0) {
+    return 0;
+  } else {
+    return 1;
+  }
 }
 
 
@@ -463,11 +566,44 @@ int verifyFile(Options *opt) {
 }
 
 
+int checkLineNumbers(int64_t *line_no, int64_t n_lines) {
+  if ((*line_no > 0 && *line_no > n_lines)
+      || (*line_no < 0 && -*line_no > n_lines)) {
+    fprintf(stderr, "Invalid line number: %" PRIi64, *line_no);
+    return 1;
+  }
+  
+  if (*line_no < 0) *line_no += n_lines;
+  return 0;
+}
+
+
+void printLine(ZlineFile *zf, i64 line_no, char **buf, size_t *buf_size) {
+  i64 line_len = ZlineFile_line_length(zf, line_no);
+  if (line_len < 0) {
+    fprintf(stderr, "Invalid line number: %" PRIi64 "\n", line_no);
+    exit(1);
+  }
+
+  /* make sure the buffer is big enough */
+  if (*buf_size < line_len) {
+    *buf_size = MAX(*buf_size * 2, line_len);
+    free(*buf);
+    *buf = (char*) malloc(*buf_size);
+  }
+
+  ZlineFile_get_line(zf, line_no, *buf);
+  puts(*buf);
+}
+
+
+
 int getLines(Options *opt) {
   ZlineFile *zf;
   int i;
-  u64 line_idx, file_line_count;
-  char *line;
+  i64 line_idx, file_line_count;
+  char *buf;
+  size_t buf_len;
 
   zf = ZlineFile_read(opt->input_filename);
   if (!zf) {
@@ -476,29 +612,58 @@ int getLines(Options *opt) {
     return 1;
   }
 
+  buf_len = 100;
+  buf = (char*) malloc(buf_len);
+
   /* number of lines in the file */
   file_line_count = ZlineFile_line_count(zf);
 
   /* loop through the array of lines requested */
   for (i=0; i < opt->line_number_count; i++) {
+    Range r = opt->line_numbers[i];
 
-    line_idx = opt->line_numbers[i];
+    assert(r.step != 0 || r.has_start);
+    
+    if (r.has_start) {
+      if (checkLineNumbers(&r.start, file_line_count)) continue;
 
-    /* check that the line index is in bounds */
-    if (line_idx >= file_line_count) {
-      printf("invalid line number: %" PRIu64 " (max %" PRIu64 ")\n",
-             line_idx, file_line_count - 1);
+      /* special case: output a single line */
+      if (r.step == 0) {
+        r.step = 1;
+        r.end = r.start + 1;
+        r.has_end = 1;
+      }
+      
     } else {
+      if (r.step > 0)
+        r.start = 0;
+      else
+        r.start = file_line_count - 1;
+    }      
 
-      /* extract one line from the file */
-      line = ZlineFile_get_line(zf, line_idx, NULL);
+    if (r.has_end) {
+      if (checkLineNumbers(&r.end, file_line_count)) continue;
+    } else {
+      if (r.step > 0)
+        r.end = file_line_count;
+      else
+        r.end = -1;
+    }
 
-      puts(line);
-      free(line);
+    assert(r.step != 0);
+    if (r.step > 0) {
+      for (line_idx = r.start; line_idx < r.end; line_idx += r.step) {
+        printLine(zf, line_idx, &buf, &buf_len);
+      }
+    } else {
+      for (line_idx = r.start; line_idx > r.end; line_idx += r.step) {
+        printLine(zf, line_idx, &buf, &buf_len);
+      }
     }
   }
 
   free(opt->line_numbers);
+  free(buf);
   
   ZlineFile_close(zf);
   
