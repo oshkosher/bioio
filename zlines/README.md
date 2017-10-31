@@ -9,7 +9,7 @@ Sample command lines
     ./zlines verify large_file.zlines large_file.txt
     gunzip < large_file.txt.gz | ./zlines create large_file.zlines -
     
-    ./zlines get large_file.zlines 0 100 1000
+    ./zlines get large_file.zlines 0 100 1000 10000:11000 -10:
     
 To extract character data from a compressed NEXUS file and put it in a zlines file:
 
