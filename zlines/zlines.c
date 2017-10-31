@@ -234,8 +234,12 @@ void printHelp(void) {
           "  zlines verify <zlines file> <text file>\n"
           "    tests if the zlines file matches the given text file\n"
           "\n"
-          "  zlines get <zlines file> [line#...]\n"
-          "    extracts the given lines from the file and prints them\n"
+          "  zlines get <zlines file> <line#> [<line#> ...]\n"
+          "    extracts the given lines from the file and prints them\n\n"
+          "    line#: index of the line, starting from 0\n"
+          "    Negative numbers count back from the end: -1 is the last line.\n"
+          "    Ranges in the style of Python array slices are also supported.\n"
+          "    For example:  1:5 -10: :100 0:100:3 ::-1\n"
           "\n");
   exit(1);
 }
@@ -569,7 +573,7 @@ int verifyFile(Options *opt) {
 int checkLineNumbers(int64_t *line_no, int64_t n_lines) {
   if ((*line_no > 0 && *line_no > n_lines)
       || (*line_no < 0 && -*line_no > n_lines)) {
-    fprintf(stderr, "Invalid line number: %" PRIi64, *line_no);
+    fprintf(stderr, "Invalid line number: %" PRIi64 "\n", *line_no);
     return 1;
   }
   
