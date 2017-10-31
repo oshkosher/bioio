@@ -9,7 +9,7 @@ Sample command lines
     ./zlines verify large_file.zlines large_file.txt
     gunzip < large_file.txt.gz | ./zlines create large_file.zlines -
     
-    ./zlines get large_file.zlines 0 100 1000
+    ./zlines get large_file.zlines 0 100 1000 10000:11000 -10:
     
 To extract character data from a compressed NEXUS file and put it in a zlines file:
 
@@ -32,21 +32,13 @@ Files
 
 File format
  - 256 byte text header containing a version number, locations of the data and index, number of text lines, number of compressed blocks, and other settings
- - Compressed blocks of data. By default, 4 megabytes of data are compressed into each block (can be changed with the -b option to zlines create). Each block contains an index of the lines in the block, followed by the contents of each line.
- - 0-7 pad bytes, so the index is 8-byte aligned
+ - Compressed blocks of data. Each block contains an index of the lines in the block, followed by the compressed contents of all the lines in the block.
+ - 0-7 pad bytes, so the block index is 8-byte aligned
  - length of the compressed index
- - compressed block array
- - compressed array of the index of the first line in each block
+ - length of the block starts index
+ - compressed block index
+ - compressed block starts array (the first line in each block)
 
-
-
-
- - if the index is not compressed:
-   - block array with an entry for each compressed block: offset in the file, original length, and compressed length
-   - line array with an entry for each line of text: block index, offset, and original length
- - if the index is compressed:
-   - length of the compressed block array
-   - length of the compressed line array
-   - compressed block array
-   - compressed line array
+When a file is opened for reading, the header, block index, and block starts array are read in. These are small and can be read quickly.
+For example, with a sample 5GB file containing 244 million lines, these sections of the file add up to just 47078 bytes. When a line is requested, the block containing that line is read, decompressed, and the line is copied from it. The most recently decompressed block is kept in memory, so if another line is requested from the same block, it can be retrieved without reading from the file.
 
