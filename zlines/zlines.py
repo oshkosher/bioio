@@ -221,9 +221,25 @@ class zline_file:
     # handle slices
     if isinstance(line_no, slice):
       result = []
-      start = 0 if line_no.start==None else line_no.start
-      stop  = nlines if (line_no.stop==None or line_no.stop >= nlines) else line_no.stop
-      step  = 1 if line_no.step==None else line_no.step
+
+      if line_no.start == None:
+        start = 0
+      else:
+        start = line_no.start
+        if start < 0: start += nlines
+
+      if line_no.stop == None:
+        stop = nlines
+      else:
+        stop = line_no.stop
+        if stop > nlines: stop = nlines
+        if stop < 0: stop += nlines
+
+      if line_no.step == None:
+        step = 1
+      else:
+        step = line_no.step
+
       for index in range(start, stop, step):
         try:
           result.append(self[index])
