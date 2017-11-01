@@ -120,6 +120,18 @@ ZlineFile_get_block_size_compressed = zlineslib.ZlineFile_get_block_size_compres
 ZlineFile_get_block_size_compressed.argtypes = [c_void_p, c_ulonglong]
 ZlineFile_get_block_size_compressed.restype = c_ulonglong
 
+# get the index of the first line in this block
+ZlineFile_get_block_first_line = zlineslib.ZlineFile_get_block_first_line
+ZlineFile_get_block_first_line.argtypes = [c_void_p, c_ulonglong]
+ZlineFile_get_block_first_line.restype = c_ulonglong
+
+# get the number of lines in this block
+ZlineFile_get_block_line_count = zlineslib.ZlineFile_get_block_line_count
+ZlineFile_get_block_line_count.argtypes = [c_void_p, c_ulonglong]
+ZlineFile_get_block_line_count.restype = c_ulonglong
+
+
+
 # close a file (from either ZlineFile_create or ZlineFile_read)
 ZlineFile_close = zlineslib.ZlineFile_close
 ZlineFile_close.argtypes = [c_void_p]
@@ -267,19 +279,30 @@ class zline_file:
     return int(ZlineFile_get_block_count(self._file))
 
   
-  def block_size(self, block_no):
+  def block(self, block_no):
     """
-    Returns the (compressed, decompressed) size of the given data block.
+    Returns details about the given block.
+    {'first_line': index of first line in the block
+     'line_count': number of lines in the block
+     'original_size': size before compression
+     'compressed_size': size after compression}
+
     Raises IndexError if block_no is invalid.
     """    
 
     if block_no < 0 or block_no >= ZlineFile_get_block_count(self._file):
       raise IndexError
-    
-    cs = ZlineFile_get_block_size_compressed(self._file, block_no);
-    ds = ZlineFile_get_block_size_original(self._file, block_no);
 
-    return (int(cs.value), int(ds.value))
+    return {
+      'compressed_size': 
+        int(ZlineFile_get_block_size_compressed(self._file, block_no)),
+      'original_size':
+        int(ZlineFile_get_block_size_original(self._file, block_no)),
+      'first_line':
+        int(ZlineFile_get_block_first_line(self._file, block_no)),
+      'line_count':
+        int(ZlineFile_get_block_line_count(self._file, block_no))
+    }
 
 
 def open(filename, mode='r', encoding='default'):

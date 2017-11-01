@@ -8,6 +8,7 @@
 *.lib
 *.exp
 *.pyc
+*.dylib
 zstd
 zstd-cygwin
 zstd-ubuntu
@@ -23,3 +24,5 @@ disk_speed
 transpose
 transpose2
 test_zlines.out
+test_zlines
+transpose_mmap
