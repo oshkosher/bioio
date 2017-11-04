@@ -237,9 +237,9 @@ void printHelp(void) {
           "  zlines get <zlines file> <line#> [<line#> ...]\n"
           "    extracts the given lines from the file and prints them\n\n"
           "    line#: index of the line, starting from 0\n"
-          "    Negative numbers count back from the end: -1 is the last line.\n"
+          "    Negative numbers count back from the end: -1 is the last line\n"
           "    Ranges in the style of Python array slices are also supported.\n"
-          "    For example:  1:5 -10: :100 0:100:3 ::-1\n"
+          "    For example:  0:5 -10: :100 0:100:3 ::-1\n"
           "\n");
   exit(1);
 }
