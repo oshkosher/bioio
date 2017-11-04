@@ -27,7 +27,7 @@
 #include "zstd.h"
 #include "common.h"
 
-#define DEFAULT_BLOCK_SIZE (8*1024*1024)
+#define DEFAULT_BLOCK_SIZE (4*1024*1024)
 #define MAX_IN_MEMORY_BLOCK DEFAULT_BLOCK_SIZE
 #define INITIAL_BLOCK_CAPACITY 100
 #define INITIAL_LINE_CAPACITY 100
@@ -35,7 +35,7 @@
 #define ZSTD_COMPRESSION_LEVEL 3
 #define MAX_HEADER_LINE_LEN 100
 #define DO_COMPRESS_INDEX 1
-#define COMPRESS_TO_FILE_BUFFER_SIZE 8192
+#define FILE_BUFFER_SIZE 8192
 
 #define ZLINE_MODE_CREATE 1
 #define ZLINE_MODE_READ 2
@@ -68,16 +68,24 @@ static int64_t compressToFile(ZlineFile *zf, const void *buf, int64_t len);
 /* Returns # of bytes written to buf.
    readbuf_len - size of readbuf. Write no more than this many bytes.
    compressed_len - size of the compressed data on disk.
+   read_offset - skip this many (decompressed) bytes at the beginning
 */
 static int64_t decompressFromFile
-  (ZlineFile *zf, void *readbuf, int64_t readbuf_len, int64_t compressed_len);
+  (ZlineFile *zf, void *readbuf, int64_t readbuf_len,
+   int64_t compressed_len, uint64_t read_offset);
 
 /* Flush the current write_block. Return a pointer to the new write_block
    (which may be the same one). */
 static ZlineBlock* flushBlock(ZlineFile *zf);
 
+/* Given the line index for one block, see if compressing the index makes
+   it smaller. If so, return the compressed data and its size in *data
+   and *len and return true. Otherwise return false. */
 static int useCompressedLineIndex(ZlineFile *zf, void **data, uint64_t *len);
 
+/* Handle the hack where ZlineIndexBlock.compressed_length_x contains both
+   the compressed length of a block and a bit noting whether the line
+   index for that block is compressed. */
 #define LINE_INDEX_COMPRESSED_FLAG ((u64)1 << 63)
 #define getBlockCompressedLen(block) \
   ((block)->compressed_length_x & ~LINE_INDEX_COMPRESSED_FLAG)
@@ -105,13 +113,27 @@ static ZlineIndexLine* lineInBlock(ZlineBlock *block, u64 line_idx);
 static int readBlock(ZlineFile *zf, u64 block_idx);
 
 
-ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *output_filename,
-                                         int64_t block_size) {
+/* Creates a new zlines file using blocks of the default size
+   (currently 4 MiB).
+
+   Use the result as the 'zf' argument to other functions in this
+   module.
+
+   Call ZlineFile_close(zf) to finish writing the file and close it.
+*/
+ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *output_filename) {
+  return ZlineFile_create2(output_filename, DEFAULT_BLOCK_SIZE);
+}
+
+  
+/* Like ZlineFile_create, but the user can select the block size. */
+ZLINE_EXPORT ZlineFile *ZlineFile_create2(const char *output_filename,
+                                          uint64_t block_size) {
 
   if (block_size > INT_MAX) {
     fprintf(stderr, "ZlineFile_create error: block_size too large\n");
     return NULL;
-  } else if (block_size <= 0) {
+  } else if (block_size == 0) {
     block_size = DEFAULT_BLOCK_SIZE;
   }
   
@@ -260,6 +282,7 @@ static int readHeader(ZlineFile *zf) {
 }
 
 
+/* Allocate a new ZlineBlock struct */
 static ZlineBlock *createBlock(int content_capacity, int line_capacity) {
   ZlineBlock *b = (ZlineBlock*) calloc(1, sizeof(ZlineBlock));
   assert(b);
@@ -276,6 +299,7 @@ static ZlineBlock *createBlock(int content_capacity, int line_capacity) {
 }
 
 
+/* Deallocate a ZlineBlock */
 static void freeBlock(ZlineBlock *b) {
   if (!b) return;
 
@@ -311,6 +335,9 @@ static void addLineInternal(ZlineFile *zf, u64 length) {
 }
 
 
+/* Given the line index for one block, see if compressing the index makes
+   it smaller. If so, return the compressed data and its size in *data
+   and *len and return true. Otherwise return false. */
 static int useCompressedLineIndex
 (ZlineFile *zf, void **compressed_line_index, uint64_t *compressed_len) {
 
@@ -442,11 +469,17 @@ static ZlineBlock* flushBlock(ZlineFile *zf) {
 }
             
   
-  
-/* length is the length of the line, and is optional. If less than 0,
-   it will be computed using strlen. */
-ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line,
-                                    int64_t length) {
+/* Adds a line of text to the file.
+   Returns -1 if the file is opened for reading, or 0 on success.
+*/
+ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line) {
+  return ZlineFile_add_line2(zf, line, strlen(line));
+}
+
+
+/* Like ZlineFile_add_line, but the length of the line is supplied. */
+ZLINE_EXPORT int ZlineFile_add_line2(ZlineFile *zf, const char *line,
+                                     uint64_t length) {
   ZlineBlock *b;
 
   if (zf->mode != ZLINE_MODE_CREATE) {
@@ -484,6 +517,8 @@ ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line,
 }
 
   
+/* If the file is open for writing, this finishes writing the file.
+   The file is closed, and any memory allocated internally is deallocated. */
 ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf) {
   size_t write_len;
   int pad_size;
@@ -652,7 +687,7 @@ static int flushOutbuf(ZlineFile *zf, ZSTD_outBuffer *outbuf,
 /* Return the number of compressed bytes written to zf->fp */
 static int64_t compressToFile(ZlineFile *zf, const void *input,
                               int64_t input_len) {
-  unsigned char buf[COMPRESS_TO_FILE_BUFFER_SIZE];
+  unsigned char buf[FILE_BUFFER_SIZE];
   ZSTD_outBuffer outbuf;
   ZSTD_inBuffer inbuf;
   size_t write_len;
@@ -708,13 +743,14 @@ static int64_t compressToFile(ZlineFile *zf, const void *input,
 
 /* return # of bytes written to readbuf */
 static int64_t decompressFromFile
-(ZlineFile *zf, void *readbuf, int64_t readbuf_len, int64_t compressed_len) {
+  (ZlineFile *zf, void *readbuf, int64_t readbuf_len,
+   int64_t compressed_len, uint64_t read_offset) {
 
-  unsigned char buf[COMPRESS_TO_FILE_BUFFER_SIZE];
+  unsigned char buf[FILE_BUFFER_SIZE];
   ZSTD_outBuffer outbuf;
   ZSTD_inBuffer inbuf;
   size_t to_read, bytes_read, result;
-  int64_t input_remaining = compressed_len;
+  int64_t input_remaining = compressed_len, skip_remaining = read_offset;
 
   /* make sure the input data is not larger than a size_t can represent */
   assert(compressed_len <= SIZE_MAX);
@@ -725,12 +761,47 @@ static int64_t decompressFromFile
   inbuf.src = buf;
   inbuf.size = 0;
   inbuf.pos = 0;
+  
+  ZSTD_initDStream(zf->decompress_stream);
+
+  /* skip the first 'skip_remaining' bytes */
+  while (input_remaining > 0 && skip_remaining > 0) {
+    unsigned char junk_buf[FILE_BUFFER_SIZE];
+    outbuf.dst = junk_buf;
+    outbuf.size = MIN(FILE_BUFFER_SIZE, skip_remaining);
+    outbuf.pos = 0;
+
+    /* move unconsumed input data to the top of the buffer */
+    if (inbuf.pos < inbuf.size) {
+      memmove(buf, buf + inbuf.pos, inbuf.size - inbuf.pos);
+    }              
+    inbuf.size -= inbuf.pos;
+    inbuf.pos = 0;
+
+    /* fill the input buffer with compressed data */
+    to_read = MIN(sizeof buf - inbuf.size, input_remaining);
+    bytes_read = fread(buf + inbuf.size, 1, to_read, zf->fp);
+    if (bytes_read != to_read) {
+      fprintf(stderr, "Failed to read from \"%s\"\n", zf->filename);
+      return 0;
+    }
+    inbuf.size += bytes_read;
+    input_remaining -= bytes_read;
+
+    /* decompress to junk buffer */
+    result = ZSTD_decompressStream(zf->decompress_stream, &outbuf, &inbuf);
+    if (ZSTD_isError(result)) {
+      fprintf(stderr, "Error decompressing data from \"%s\"\n",
+              zf->filename);
+      return 0;
+    }
+
+    skip_remaining -= outbuf.pos;
+  }
 
   outbuf.dst = readbuf;
   outbuf.size = readbuf_len;
   outbuf.pos = 0;
-  
-  ZSTD_initDStream(zf->decompress_stream);
 
   /* Stop if all compressed data has been read or readbuf is full.
      If readbuf fills up before all the content has been decompressed,
@@ -744,7 +815,7 @@ static int64_t decompressFromFile
     inbuf.size -= inbuf.pos;
     inbuf.pos = 0;
 
-    /* read a chunk of data */
+    /* fill the input buffer with compressed data */
     to_read = MIN(sizeof buf - inbuf.size, input_remaining);
     bytes_read = fread(buf + inbuf.size, 1, to_read, zf->fp);
     if (bytes_read != to_read) {
@@ -768,7 +839,10 @@ static int64_t decompressFromFile
   
 
 
-/* Open an existing zlines file for reading. */
+/* Open an existing zlines file for reading.
+   Use the result as the 'zf' argument to other functions in this module.
+   Call ZlineFile_close(zf) to close the file.
+*/
 ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
   ZlineFile *zf = (ZlineFile*) calloc(1, sizeof(ZlineFile));
   size_t read_len;
@@ -815,14 +889,14 @@ ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename) {
     /* read the compressed block index */
     bytes_read = decompressFromFile
       (zf, zf->blocks, zf->blocks_size * sizeof(ZlineIndexBlock),
-       compressed_sizes[0]);
+       compressed_sizes[0], 0);
     if (bytes_read != zf->blocks_size * sizeof(ZlineIndexBlock))
       goto fail;
 
     /* read the compressed line starts */
     bytes_read = decompressFromFile
       (zf, zf->block_starts, (zf->blocks_size-1) * sizeof(u64),
-       compressed_sizes[1]);
+       compressed_sizes[1], 0);
     if (bytes_read != (zf->blocks_size-1) * sizeof(u64))
       goto fail;
   }
@@ -865,7 +939,8 @@ ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf) {
   return zf->line_count;
 }
 
-/* Returns the length of the given line. */
+
+/* Returns the length of the given line or -1 if there is no such line. */
 ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
   ZlineIndexLine *line;
   ZlineBlock *block;
@@ -878,6 +953,7 @@ ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx) {
   
   return line->length;
 }
+
 
 /* Returns the length of the longest line. */
 ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf) {
@@ -1026,7 +1102,7 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
     b->line_index_size = compressed_index_len;
 
     bytes_read = decompressFromFile(zf, b->lines, line_bytes,
-                                    compressed_index_len);
+                                    compressed_index_len, 0);
   } else {
     b->line_index_size = line_bytes;
     bytes_read = fread(b->lines, 1, line_bytes, zf->fp);
@@ -1045,7 +1121,7 @@ static int readBlock(ZlineFile *zf, u64 block_idx) {
     /* Read compressed content */
     b->content_size = block->decompressed_length;
     bytes_read = decompressFromFile(zf, b->content, b->content_size,
-                                    getBlockCompressedLen(block));
+                                    getBlockCompressedLen(block), 0);
     if (bytes_read != b->content_size)
       goto fail;
   }
@@ -1058,23 +1134,54 @@ fail:
 }
 
 
-/* Reads a line from the file. If buf is NULL, memory to store the line will
-   be allocated with malloc. The caller must deallocate the memory with free().
-   If buf is not NULL, the line will be written to that location.
-   The caller can use ZlineFile_line_length() to check that their buffer
-   is large enough.
+/* Reads a line from the file and returns it as a string.
+   The result has been allocated with malloc(); the caller is responsible
+   for deallocating it with free().
 
-   Return value: The location where the line was written, or NULL on error.
-
-   If line_idx is >= ZlineFile_line_count(zf), or a memory allocation failed,
-   or an error was encountered reading the file, this will return NULL.
+   If line_idx is invalid, a memory allocation failed, or an error was
+   encountered reading the file, this will return NULL.
 */
-ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
-                                      char *buf) {
+ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx) {
+  int64_t len = ZlineFile_line_length(zf, line_idx);
+  char *buf, *result;
+
+  if (len < 0) return NULL;
+  
+  buf = (char*) malloc(len + 1);
+  if (buf == NULL) {
+    fprintf(stderr, "Out of memory reading line %" PRIu64 " containing %"
+            PRIi64 " bytes\n", line_idx, len);
+    return NULL;
+  }
+  
+  result = ZlineFile_get_line2(zf, line_idx, buf, len+1, 0);
+
+  if (result == NULL)
+    free(buf);
+
+  return result;
+}
+
+
+/* Like ZlineFile_get_line, but rather than copying the whole line, it
+   copies part of line starting 'offset' bytes from its beginning.
+
+   The results are written to 'buf', including a nul terminating
+   byte. If the results are longer than buf_len bytes, only the first
+   'buf_len'-1 bytes and a nul terminator are copied to 'buf'.
+
+   If 'offset' is past the end of the string, a zero-length string
+   is returned.
+
+   Returns NULL on error, otherwise it returns 'buf'.
+*/
+ZLINE_EXPORT char *ZlineFile_get_line2
+  (ZlineFile *zf, uint64_t line_idx,
+   char *buf, uint64_t buf_len, uint64_t offset) {
+  
   ZlineIndexLine *line;
   ZlineBlock *block;
-  int64_t file_pos = -1;
-  char *result;
+  int64_t file_pos = -1, copy_len;
 
   assert(zf);
 
@@ -1094,23 +1201,15 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
      or read_block. */
   loadLine(zf, line_idx, &line, &block);
 
-  /* allocate an output buffer if necessary, and point result at it */
-  if (buf) {
-    result = buf;
-  } else {
-    result = (char*) malloc(line->length + 1);
-    if (!result) {
-      fprintf(stderr, "Out of memory getting line %" PRIu64
-              ", length %" PRIu64 "\n", line_idx, line->length);
-      goto fail;
-    }
-  }
+  copy_len = 0;
 
-  if (line->length > 0) {
+  if (line->length > 0 && offset < line->length) {
     
+    copy_len = MIN(line->length - offset, buf_len-1);
+
     /* If the line was loaded into memory, copy it to the result buffer */
     if (block->content_size > 0) {
-      memcpy(result, block->content + line->offset, line->length);
+      memcpy(buf, block->content + line->offset + offset, copy_len);
     }
 
     /* if the line was long, loadLine will leave it on disk. Decompress
@@ -1128,9 +1227,10 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
       
       fseek(zf->fp, block->offset + block->line_index_size, SEEK_SET);
       compressed_len = getBlockCompressedLen(index_block);
-      decompressed_len = decompressFromFile(zf, result, line->length,
-                                            compressed_len);
-      if (decompressed_len != line->length) {
+      
+      decompressed_len = decompressFromFile(zf, buf, copy_len,
+                                            compressed_len, offset);
+      if (decompressed_len != (i64)copy_len) {
         fprintf(stderr, "Failed to decompress line %" PRIu64 " from file\n",
                 line_idx);
         goto fail;
@@ -1138,18 +1238,14 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx,
     }
   }
 
-  result[line->length] = 0;
+  buf[copy_len] = 0;
 
-  goto ok;
-  
  fail:
-  if (result != buf) free(result);
-
- ok:
+  /* restore the file pointer */
   if (zf->fseek_flag && file_pos != -1)
     fseek(zf->fp, file_pos, SEEK_SET);
   
-  return result;
+  return buf;
 }
               
 

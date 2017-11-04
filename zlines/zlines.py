@@ -73,7 +73,7 @@ zlineslib = cdll.LoadLibrary(libname)
 
 # create a new file
 ZlineFile_create = zlineslib.ZlineFile_create
-ZlineFile_create.argtypes = [c_char_p, c_longlong]
+ZlineFile_create.argtypes = [c_char_p]
 ZlineFile_create.restype = c_void_p
 
 # open an existing file
@@ -82,7 +82,7 @@ ZlineFile_read.restype = c_void_p
 
 # add a line to a file being created
 ZlineFile_add_line = zlineslib.ZlineFile_add_line
-ZlineFile_add_line.argtypes = [c_void_p, c_char_p, c_ulonglong]
+ZlineFile_add_line.argtypes = [c_void_p, c_char_p]
 ZlineFile_add_line.restype = c_int
 
 # get the number of lines in a file
@@ -101,9 +101,10 @@ ZlineFile_max_line_length.argtypes = [c_void_p]
 ZlineFile_max_line_length.restype = c_ulonglong
 
 # get the contents for one line
-ZlineFile_get_line = zlineslib.ZlineFile_get_line
-ZlineFile_get_line.argtypes = [c_void_p, c_ulonglong, c_char_p]
-ZlineFile_get_line.restype = c_char_p
+ZlineFile_get_line2 = zlineslib.ZlineFile_get_line2
+ZlineFile_get_line2.argtypes = [c_void_p, c_ulonglong, c_char_p, c_ulonglong,
+                                c_ulonglong]
+ZlineFile_get_line2.restype = c_char_p
 
 # get internal number of data blocks
 ZlineFile_get_block_count = zlineslib.ZlineFile_get_block_count
@@ -165,7 +166,7 @@ class zline_file:
     self._file = None
     
     if mode == 'w':
-      self._file = ZlineFile_create(filename, 4*1024*1024)
+      self._file = ZlineFile_create(filename)
       if self._file == None:
         raise IOError('Cannot create file')
     elif mode == 'r':
@@ -195,7 +196,7 @@ class zline_file:
     if self._encoding:
       line = line.encode(self._encoding)
 
-    result = ZlineFile_add_line(self._file, line, -1)
+    result = ZlineFile_add_line(self._file, line)
     if result == -1:
       raise RuntimeError('File is opened for reading')
 
@@ -267,7 +268,7 @@ class zline_file:
     if llen == -1: raise IndexError
     
     buf = create_string_buffer(llen+1)
-    line = ZlineFile_get_line(self._file, line_no, buf)
+    line = ZlineFile_get_line2(self._file, line_no, buf, llen+1, 0)
     if line == None: return None
     if self._encoding:
       return line.decode(self._encoding)

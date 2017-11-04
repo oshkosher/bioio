@@ -387,7 +387,7 @@ int createFile(Options *opt) {
     input_file_size = getFileSize(opt->input_filename);
 
   /* open the zlines file */
-  zf = ZlineFile_create(opt->output_filename, opt->block_size);
+  zf = ZlineFile_create2(opt->output_filename, opt->block_size);
   if (!zf) {
     fprintf(stderr, "Error: cannot write \"%s\"\n", opt->output_filename);
     return 1;
@@ -413,7 +413,7 @@ int createFile(Options *opt) {
     if ((u64)line_len < min_line_len) min_line_len = line_len;
 
     /* add the line to the zlines file */
-    if (ZlineFile_add_line(zf, line, line_len)) {
+    if (ZlineFile_add_line2(zf, line, line_len)) {
       err = 1;
       break;
     }
@@ -505,7 +505,7 @@ int fileDetails(Options *opt) {
 
 int verifyFile(Options *opt) {
   ZlineFile *zf;
-  u64 line_idx = 0, line_count;
+  u64 line_idx = 0, line_count, buf_len;
   char *line = NULL, *extracted_line;
   const char *text_filename, *zlines_filename;
   ssize_t line_len;
@@ -523,7 +523,8 @@ int verifyFile(Options *opt) {
   }
 
   line_count = ZlineFile_line_count(zf);
-  extracted_line = (char*) malloc(ZlineFile_max_line_length(zf) + 1);
+  buf_len = ZlineFile_max_line_length(zf) + 1;
+  extracted_line = (char*) malloc(buf_len);
 
   text_file = openFileOrStdin(text_filename);
   if (!text_file) return 1;
@@ -539,7 +540,7 @@ int verifyFile(Options *opt) {
       return 1;
     }
     
-    ZlineFile_get_line(zf, line_idx, extracted_line);
+    ZlineFile_get_line2(zf, line_idx, extracted_line, buf_len, 0);
     if (strcmp(extracted_line, line)) {
       printf("Line %" PRIu64 " mismatch.\n", line_idx);
       err_count++;
@@ -596,7 +597,7 @@ void printLine(ZlineFile *zf, i64 line_no, char **buf, size_t *buf_size) {
     *buf = (char*) malloc(*buf_size);
   }
 
-  ZlineFile_get_line(zf, line_no, *buf);
+  ZlineFile_get_line2(zf, line_no, *buf, *buf_size, 0);
   puts(*buf);
 }
 
@@ -677,7 +678,7 @@ int getLines(Options *opt) {
 
 int printLines(Options *opt) {
   ZlineFile *zf;
-  u64 i, count, line_len;
+  u64 i, count, line_len, buf_len;
   char *line;
 
   zf = ZlineFile_read(opt->input_filename);
@@ -690,8 +691,9 @@ int printLines(Options *opt) {
   /* number of lines in the file */
   count = ZlineFile_line_count(zf);
 
-  /* allocate a buffer big enough to hold any line */
-  line = (char*) malloc(ZlineFile_max_line_length(zf) + 2);
+  /* allocate a buffer big enough to hold any line, plus newline and nul */
+  buf_len = ZlineFile_max_line_length(zf) + 2;
+  line = (char*) malloc(buf_len);
   if (!line) {
     fprintf(stderr, "Out of memory\n");
     return 1;
@@ -700,7 +702,7 @@ int printLines(Options *opt) {
   /* extract each line and print it */
   for (i = 0; i < count; i++) {
     line_len = ZlineFile_line_length(zf, i);
-    ZlineFile_get_line(zf, i, line);
+    ZlineFile_get_line2(zf, i, line, buf_len, 0);
     line[line_len] = '\n';
     fwrite(line, line_len+1, 1, stdout);
   }
