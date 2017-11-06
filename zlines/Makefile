@@ -23,7 +23,7 @@ endif
 # cl /LD /EHsc /nologo  /O2 /MT -D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS /Izstd\lib zline_api.c common.c zstd/build/VS_scripts/bin/Release/x64/libzstd.lib /Felibzlines.dll
 
 EXECS = create_2d_data zlines zlines_test transpose \
-  check_transpose transpose_mmap test_zlines $(SHLIB)
+  check_transpose transpose_mmap test_zlines fastq_read $(SHLIB)
 
 all: $(EXECS)
 
@@ -40,6 +40,9 @@ CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
 CC = gcc $(CFLAGS) -D_GNU_SOURCE
 
 zlines: zlines.c zline_api.o common.o
+	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
+
+fastq_read: fastq_read.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
 
 zline_api.o: zline_api.c zline_api.h $(ZSTD_LIB_FILE)
