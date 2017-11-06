@@ -13,143 +13,12 @@
 #ifndef __ZLINE_API_H__
 #define __ZLINE_API_H__
 
-#include <stdio.h>
 #include <stdint.h>
-#include <stdlib.h>
-#include "zstd.h"
-
-
-/* This the entry for one block of data when the block isn't necessarily
-   in memory. */
-typedef struct ZlineIndexBlock {
-  /* Offset, from the beginning of the file, where the compressed form
-     of this block can be found.
-  */
-  uint64_t offset;
-
-  /* Length of the compressed content of this block.
-     This does not include the length of the line index.
-     Also, the most significant bit will be set iff the line index
-     for this block is compressed.
-  */
-  uint64_t compressed_length_x;
-  
-  /* Length of this block when decompressed. */
-  uint64_t decompressed_length;
-
-} ZlineIndexBlock;
-
-
-
-/* On disk and in memory, there will be an array of line numbers, one
-   per block, for quickly looking up the block in which a given line
-   is stored.
-*/
-
-
-/* One line of data. */
-typedef struct ZlineIndexLine {
-  /* offset, in the decompressed block, where this line can be found. */
-  uint64_t offset;
-
-  /* length of this line (decompressed) */
-  uint64_t length;
-} ZlineIndexLine;
-
-
-/* This represents a block of data that is in memory. */
-typedef struct ZlineBlock {
-  /* index of this block */
-  int64_t idx;
-  
-  /* Offset, from the beginning of the file, where the compressed form
-     of this block can be found.
-  */
-  uint64_t offset;
-
-  /* Index of the first line that starts in this block,
-     which is lines[0]. */
-  uint64_t first_line;
-
-  /* array of lines stored in this block */
-  ZlineIndexLine *lines;
-  int lines_size, lines_capacity;
-
-  /* contents of the lines stored in this block */
-  char *content;
-  int64_t content_size, content_capacity;
-
-  /* Number of bytes used to encode the line index, which may be compressed
-     or not. The compressed content is stored at offset + line_index_size.
-     Set by loadLine().
-  */
-  uint64_t line_index_size;
-
-} ZlineBlock;
-
-
-/*
-  file overhead = header + pad + blocks + lines
-    header = 256
-    pad = 0..7
-    blocks = block_count * 24
-    lines = line_count * 24
-*/
-
 
 typedef struct {
-  char *filename;
-  FILE *fp;
-  int mode;
-
-  /* Compressing the index will save space, but if the index is not
-     compressed, it would be easier to memory-map the file and access
-     data quickly. */
-  int is_index_compressed;
-
-  /* Current block being written. Use a pointer rather than including
-     the struct inline because in the future the blocks may be compressed
-     and written in a background thread. With a pointer it will be
-     easier to pass a block to another thread. */
-  ZlineBlock *write_block;
-
-  /* Current block being read */
-  ZlineBlock *read_block;
-
-  /* Total number of lines in the file */
-  uint64_t line_count;
-  
-  /* where the compressed line data starts in the file */
-  uint64_t data_offset;
-
-  /* where block index data starts in the file */
-  uint64_t index_offset;
-
-  /* Array of blocks.  When writing, the current block is
-     blocks[block_count-1], and only the "offset" field is accurate. */
-  ZlineIndexBlock *blocks;
-  uint64_t blocks_size, blocks_capacity;
-  
-  /* Index of the first line in each block. This contains block_count-1
-     entries, because the first block always starts with line 0.
-     This is a cache of the data in ZlineBlock.first_line.
-     This is sorted, so either a linear search can be used.
-  */
-  uint64_t *block_starts;
-
-  uint64_t max_line_len;
-
-  /* This is set to 1 whenever fseek is called. 
-     When writing the file, the current file offset is always
-     write_block->offset.
-     If a line is read from and earlier block, fseek will need to be called
-     to read the earlier block. If this flag has been set, then the caller
-     will know it needs to restore the file pointer. */
-  int fseek_flag;
-
-  ZSTD_CStream *compress_stream;
-  ZSTD_DStream *decompress_stream;
+  int placeholder;
 } ZlineFile;
+
 
 
 #ifdef __CYGWIN__
@@ -174,34 +43,47 @@ extern "C" {
 */
 ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *filename);
 
+  
 /* Like ZlineFile_create, but the user can select the block size. */
 ZLINE_EXPORT ZlineFile *ZlineFile_create2(const char *filename,
                                           uint64_t block_size);
 
+  
 /* Open an existing zlines file for reading.
    Use the result as the 'zf' argument to other functions in this module.
    Call ZlineFile_close(zf) to close the file.
 */
 ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename);
 
+
+/* If the file is open for writing, this finishes writing the file.
+   The file is closed, and any memory allocated internally is deallocated. */
+ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf);
+
+  
 /* Adds a line of text to the file.
    Returns -1 if the file is opened for reading, or 0 on success.
 */
 ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line);
 
+  
 /* Like ZlineFile_add_line, but the length of the line is supplied. */
 ZLINE_EXPORT int ZlineFile_add_line2(ZlineFile *zf, const char *line,
                                      uint64_t length);
 
+  
 /* Returns the number of lines in the file. */
 ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf);
 
+  
 /* Returns the length of the given line or -1 if there is no such line. */
 ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
 
+  
 /* Returns the length of the longest line. */
 ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf);
 
+  
 /* Reads a line from the file and returns it as a string.
    The result has been allocated with malloc(); the caller is responsible
    for deallocating it with free().
@@ -211,6 +93,7 @@ ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf);
 */
 ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx);
 
+  
 /* Like ZlineFile_get_line, but rather than copying the whole line, it
    copies part of line starting 'offset' bytes from its beginning.
 
@@ -226,7 +109,7 @@ ZLINE_EXPORT char *ZlineFile_get_line2
 
 
 
-/* The function below are only useful for looking inside the implementation. */
+/* The functions below are only useful for looking inside the implementation. */
 
 
   
@@ -249,11 +132,13 @@ ZLINE_EXPORT uint64_t ZlineFile_get_block_line_count
 ZLINE_EXPORT int ZlineFile_get_line_details
   (ZlineFile *zf, uint64_t line_idx, uint64_t *length,
    uint64_t *offset_in_block, uint64_t *block_idx);
+/* Return the offset in the file where the data for this block is stored */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_offset
+  (ZlineFile *zf, uint64_t block_idx);
+/* Return the offset in the file where the block index starts */
+ZLINE_EXPORT uint64_t ZlineFile_get_block_index_offset(ZlineFile *zf);
 
 
-/* If the file is open for writing, this finishes writing the file.
-   The file is closed, and any memory allocated internally is deallocated. */
-ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf);
 
  
 #ifdef __cplusplus

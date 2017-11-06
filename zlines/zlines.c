@@ -401,7 +401,7 @@ int createFile(Options *opt) {
 
     /* output a status update now and then */
     if (total_bytes >= next_update) {
-      statusOutput(zf->line_count, total_bytes, input_file_size);
+      statusOutput(ZlineFile_line_count(zf), total_bytes, input_file_size);
       next_update = total_bytes + CREATE_FILE_UPDATE_FREQUENCY_BYTES;
     }
 
@@ -420,7 +420,7 @@ int createFile(Options *opt) {
   }
 
   /* print a final status update */
-  statusOutput(zf->line_count, total_bytes, input_file_size);
+  statusOutput(ZlineFile_line_count(zf), total_bytes, input_file_size);
 
   /* close the zlines file because the index and header aren't written until
      the file is closed. */
@@ -435,7 +435,7 @@ int createFile(Options *opt) {
   assert(zf);
 
   /* compute the compressed size of the data */
-  for (idx = 0; idx < zf->blocks_size; idx++)
+  for (idx = 0; idx < ZlineFile_get_block_count(zf); idx++)
     total_zblock_size += ZlineFile_get_block_size_compressed(zf, idx);
 
   overhead = output_file_size - total_zblock_size;
@@ -446,8 +446,8 @@ int createFile(Options *opt) {
            "%s bytes overhead, %.2f bytes per line\n", 
            min_line_len, max_line_len,
            commafy(buf1, total_zblock_size),
-           zf->blocks_size, zf->blocks_size==1 ? "" : "s",
-           commafy(buf2, overhead), (double)overhead / zf->line_count);
+           ZlineFile_get_block_count(zf), ZlineFile_get_block_count(zf)==1 ? "" : "s",
+           commafy(buf2, overhead), (double)overhead / ZlineFile_line_count(zf));
   }
   
   ZlineFile_close(zf);
@@ -467,27 +467,27 @@ int fileDetails(Options *opt) {
   }
 
   printf("%" PRIu64 " lines, longest line %" PRIu64 " bytes\n",
-         zf->line_count, zf->max_line_len);
+         ZlineFile_line_count(zf), ZlineFile_max_line_length(zf));
   
-  printf("data begins at offset %" PRIu64 "\n", zf->data_offset);
-  printf("block index at offset %" PRIu64 "\n", zf->index_offset);
+  printf("data begins at offset %" PRIu64 "\n", ZlineFile_get_block_offset(zf, 0));
+  printf("block index at offset %" PRIu64 "\n", ZlineFile_get_block_index_offset(zf));
 
-  printf("%" PRIu64 " compressed blocks\n", zf->blocks_size);
+  printf("%" PRIu64 " compressed blocks\n", ZlineFile_get_block_count(zf));
 
   if (opt->flag_blocks) {
-    for (i=0; i < zf->blocks_size; i++) {
+    for (i=0; i < ZlineFile_get_block_count(zf); i++) {
       printf("block %" PRIu64 ": %" PRIu64 " lines, %" PRIu64 " bytes->"
              "%" PRIu64 " bytes, offset %" PRIu64 "\n",
              i,
              ZlineFile_get_block_line_count(zf, i),
              ZlineFile_get_block_size_original(zf, i),
              ZlineFile_get_block_size_compressed(zf, i),
-             zf->blocks[i].offset);
+             ZlineFile_get_block_offset(zf, i));
     }
   }
 
   if (opt->flag_lines) {
-    for (i=0; i < zf->line_count; i++) {
+    for (i=0; i < ZlineFile_line_count(zf); i++) {
       uint64_t block_idx, length, offset;
       ZlineFile_get_line_details(zf, i, &length, &offset, &block_idx);
       
