@@ -15,10 +15,9 @@
 
 #include <stdint.h>
 
-typedef struct {
-  int placeholder;
-} ZlineFile;
-
+/* Make the ZlineFile type opaque while preserving type safety. */
+struct ZlineFile;
+typedef struct ZlineFile* ZlineFile;
 
 
 #ifdef __CYGWIN__
@@ -41,11 +40,11 @@ extern "C" {
 
    Call ZlineFile_close(zf) to finish writing the file and close it.
 */
-ZLINE_EXPORT ZlineFile *ZlineFile_create(const char *filename);
+ZLINE_EXPORT ZlineFile ZlineFile_create(const char *filename);
 
   
 /* Like ZlineFile_create, but the user can select the block size. */
-ZLINE_EXPORT ZlineFile *ZlineFile_create2(const char *filename,
+ZLINE_EXPORT ZlineFile ZlineFile_create2(const char *filename,
                                           uint64_t block_size);
 
   
@@ -53,35 +52,35 @@ ZLINE_EXPORT ZlineFile *ZlineFile_create2(const char *filename,
    Use the result as the 'zf' argument to other functions in this module.
    Call ZlineFile_close(zf) to close the file.
 */
-ZLINE_EXPORT ZlineFile *ZlineFile_read(const char *filename);
+ZLINE_EXPORT ZlineFile ZlineFile_read(const char *filename);
 
 
 /* If the file is open for writing, this finishes writing the file.
    The file is closed, and any memory allocated internally is deallocated. */
-ZLINE_EXPORT void ZlineFile_close(ZlineFile *zf);
+ZLINE_EXPORT void ZlineFile_close(ZlineFile zf);
 
   
 /* Adds a line of text to the file.
    Returns -1 if the file is opened for reading, or 0 on success.
 */
-ZLINE_EXPORT int ZlineFile_add_line(ZlineFile *zf, const char *line);
+ZLINE_EXPORT int ZlineFile_add_line(ZlineFile zf, const char *line);
 
   
 /* Like ZlineFile_add_line, but the length of the line is supplied. */
-ZLINE_EXPORT int ZlineFile_add_line2(ZlineFile *zf, const char *line,
+ZLINE_EXPORT int ZlineFile_add_line2(ZlineFile zf, const char *line,
                                      uint64_t length);
 
   
 /* Returns the number of lines in the file. */
-ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile *zf);
+ZLINE_EXPORT uint64_t ZlineFile_line_count(ZlineFile zf);
 
   
 /* Returns the length of the given line or -1 if there is no such line. */
-ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile *zf, uint64_t line_idx);
+ZLINE_EXPORT int64_t ZlineFile_line_length(ZlineFile zf, uint64_t line_idx);
 
   
 /* Returns the length of the longest line. */
-ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf);
+ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile zf);
 
   
 /* Reads a line from the file and returns it as a string.
@@ -91,7 +90,7 @@ ZLINE_EXPORT uint64_t ZlineFile_max_line_length(ZlineFile *zf);
    If line_idx is invalid, a memory allocation failed, or an error was
    encountered reading the file, this will return NULL.
 */
-ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx);
+ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile zf, uint64_t line_idx);
 
   
 /* Like ZlineFile_get_line, but rather than copying the whole line, it
@@ -104,7 +103,7 @@ ZLINE_EXPORT char *ZlineFile_get_line(ZlineFile *zf, uint64_t line_idx);
    Returns NULL on error, otherwise it returns 'buf'.
 */
 ZLINE_EXPORT char *ZlineFile_get_line2
-  (ZlineFile *zf, uint64_t line_idx,
+  (ZlineFile zf, uint64_t line_idx,
    char *buf, uint64_t buf_len, uint64_t offset);
 
 
@@ -117,26 +116,26 @@ ZLINE_EXPORT char *ZlineFile_get_line2
    If the file is open in write mode, this may under-report the block
    count by one, because it won't count a block to which data is still
    being added. */
-ZLINE_EXPORT uint64_t ZlineFile_get_block_count(ZlineFile *zf);
+ZLINE_EXPORT uint64_t ZlineFile_get_block_count(ZlineFile zf);
 
 /* Returns the compressed or decompressed size of the given block.
    If block_idx is invalid, returns 0. */
 ZLINE_EXPORT uint64_t ZlineFile_get_block_size_original
-  (ZlineFile *zf, uint64_t block_idx);
+  (ZlineFile zf, uint64_t block_idx);
 ZLINE_EXPORT uint64_t ZlineFile_get_block_size_compressed
-  (ZlineFile *zf, uint64_t block_idx);
+  (ZlineFile zf, uint64_t block_idx);
 ZLINE_EXPORT uint64_t ZlineFile_get_block_first_line
-  (ZlineFile *zf, uint64_t block_idx);
+  (ZlineFile zf, uint64_t block_idx);
 ZLINE_EXPORT uint64_t ZlineFile_get_block_line_count
-  (ZlineFile *zf, uint64_t block_idx);
+  (ZlineFile zf, uint64_t block_idx);
 ZLINE_EXPORT int ZlineFile_get_line_details
-  (ZlineFile *zf, uint64_t line_idx, uint64_t *length,
+  (ZlineFile zf, uint64_t line_idx, uint64_t *length,
    uint64_t *offset_in_block, uint64_t *block_idx);
 /* Return the offset in the file where the data for this block is stored */
 ZLINE_EXPORT uint64_t ZlineFile_get_block_offset
-  (ZlineFile *zf, uint64_t block_idx);
+  (ZlineFile zf, uint64_t block_idx);
 /* Return the offset in the file where the block index starts */
-ZLINE_EXPORT uint64_t ZlineFile_get_block_index_offset(ZlineFile *zf);
+ZLINE_EXPORT uint64_t ZlineFile_get_block_index_offset(ZlineFile zf);
 
 
 

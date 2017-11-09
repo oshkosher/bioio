@@ -367,7 +367,7 @@ void statusOutput(u64 line_count, u64 byte_count, u64 file_size) {
 
 /* Read a text file and create a zlines file from it. */
 int createFile(Options *opt) {
-  ZlineFile *zf;
+  ZlineFile zf;
   char *line = NULL, buf1[50], buf2[50];
   ssize_t line_len;
   size_t buf_len = 0;
@@ -457,7 +457,7 @@ int createFile(Options *opt) {
 
 
 int fileDetails(Options *opt) {
-  ZlineFile *zf;
+  ZlineFile zf;
   u64 i;
 
   zf = ZlineFile_read(opt->input_filename);
@@ -504,7 +504,7 @@ int fileDetails(Options *opt) {
 
 
 int verifyFile(Options *opt) {
-  ZlineFile *zf;
+  ZlineFile zf;
   u64 line_idx = 0, line_count, buf_len;
   char *line = NULL, *extracted_line;
   const char *text_filename, *zlines_filename;
@@ -583,7 +583,7 @@ int checkLineNumbers(int64_t *line_no, int64_t n_lines) {
 }
 
 
-void printLine(ZlineFile *zf, i64 line_no, char **buf, size_t *buf_size) {
+void printLine(ZlineFile zf, i64 line_no, char **buf, size_t *buf_size) {
   i64 line_len = ZlineFile_line_length(zf, line_no);
   if (line_len < 0) {
     fprintf(stderr, "Invalid line number: %" PRIi64 "\n", line_no);
@@ -604,7 +604,7 @@ void printLine(ZlineFile *zf, i64 line_no, char **buf, size_t *buf_size) {
 
 
 int getLines(Options *opt) {
-  ZlineFile *zf;
+  ZlineFile zf;
   int i;
   i64 line_idx, file_line_count;
   char *buf;
@@ -677,7 +677,7 @@ int getLines(Options *opt) {
 
 
 int printLines(Options *opt) {
-  ZlineFile *zf;
+  ZlineFile zf;
   u64 i, count, line_len, buf_len;
   char *line;
 

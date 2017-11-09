@@ -14,7 +14,7 @@
 
 
 int main(int argc, char **argv) {
-  ZlineFile *zf;
+  ZlineFile zf;
   int64_t i, count, bytes = 0, buf_len;
   char *line = NULL;
 

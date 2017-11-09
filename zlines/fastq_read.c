@@ -30,7 +30,7 @@ int main(int argc, const char **argv) {
   int i, n_selected, selected[4];
   const char *filename, *which_lines;
   int64_t first_read, read_count, total_read_count, read_no;
-  ZlineFile *zf;
+  ZlineFile zf;
 
   if (argc != 5) printHelp();
   filename = argv[1];

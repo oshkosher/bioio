@@ -97,7 +97,7 @@ typedef struct ZlineBlock {
 */
 
 
-typedef struct {
+struct ZlineFile {
   char *filename;
   FILE *fp;
   int mode;
@@ -149,7 +149,7 @@ typedef struct {
 
   ZSTD_CStream *compress_stream;
   ZSTD_DStream *decompress_stream;
-} ZF;
+};
 
 
 #endif /* __ZLINE_INTERNAL_API_H__ */

@@ -26,3 +26,4 @@ transpose2
 test_zlines.out
 test_zlines
 transpose_mmap
+*.stackdump

@@ -15,7 +15,7 @@
 
 void test_add_one() {
   char *p, buf[100] = {0};
-  ZlineFile *z;
+  ZlineFile z;
 
   z = ZlineFile_create(FILENAME);
   assert(ZlineFile_line_count(z) == 0);
@@ -62,7 +62,7 @@ void test_add_one() {
 
 
 void test_add_some() {
-  ZlineFile *z = ZlineFile_create(FILENAME);
+  ZlineFile z = ZlineFile_create(FILENAME);
   char buf[100];
 
   assert(0 == ZlineFile_max_line_length(z));
@@ -107,7 +107,7 @@ void test_add_some() {
 
 
 void test_blocks() {
-  ZlineFile *z = ZlineFile_create2(FILENAME, 100);
+  ZlineFile z = ZlineFile_create2(FILENAME, 100);
   char buf[100];
 
   ZlineFile_add_line(z, "this is 80 characters.......................................................done");
@@ -138,7 +138,7 @@ void test_blocks() {
 
 
 void test_long_line() {
-  ZlineFile *z;
+  ZlineFile z;
   const char *s1 = "this has 11";
   const char *s2 = "this is 50 chars..............................long";
   char buf[100];
@@ -169,7 +169,7 @@ void test_long_line() {
 void test_many_lines() {
   char buf[100], buf2[100];
   int i, n = 1000;
-  ZlineFile *z;
+  ZlineFile z;
 
   z = ZlineFile_create(FILENAME);
 

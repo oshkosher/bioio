@@ -35,9 +35,9 @@ ZLIBS=$(ZSTD_LIB_FILE)
 LIBS=-lm
 # OPT=-g
 OPT=-O3 -DNDEBUG
-CFLAGS=$(OPT) -std=c89 -Wall $(ZSTD_INC)
+CFLAGS=$(OPT) -Wall $(ZSTD_INC)
 
-CC = gcc $(CFLAGS) -D_GNU_SOURCE
+CC = gcc -std=c89 $(CFLAGS) -D_GNU_SOURCE
 
 zlines: zlines.c zline_api.o common.o
 	$(CC) $^ $(ZLIBS) $(LIBS) -o $@
