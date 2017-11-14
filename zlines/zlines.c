@@ -591,8 +591,8 @@ void printLine(ZlineFile zf, i64 line_no, char **buf, size_t *buf_size) {
   }
 
   /* make sure the buffer is big enough */
-  if (*buf_size < line_len) {
-    *buf_size = MAX(*buf_size * 2, line_len);
+  if (*buf_size < line_len + 1) {
+    *buf_size = MAX(*buf_size * 2, line_len + 1);
     free(*buf);
     *buf = (char*) malloc(*buf_size);
   }
